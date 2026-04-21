@@ -134,6 +134,9 @@ enum GenerateType {
 
         #[arg(long, default_value = "edge-to-edge")]
         print_layout: String,
+
+        #[arg(long)]
+        upscale: bool,
     },
     #[command(group(
         clap::ArgGroup::new("input")
@@ -152,6 +155,9 @@ enum GenerateType {
 
         #[arg(short, long, default_value = "output.zip")]
         output_path: PathBuf,
+
+        #[arg(long)]
+        upscale: bool,
     },
     Bleed {
         #[arg(short, long)]
@@ -412,6 +418,7 @@ async fn handle_generate(
             cut_lines,
             cut_line_thickness,
             print_layout,
+            upscale,
         } => {
             let page_size_enum = parse_page_size(&page_size).context("Invalid page size")?;
             let cut_lines_enum =
@@ -438,6 +445,7 @@ async fn handle_generate(
                     cut_lines: cut_lines_enum,
                     print_layout: print_layout_enum,
                     cut_line_thickness,
+                    upscale,
                 },
                 None,
             )
@@ -455,13 +463,14 @@ async fn handle_generate(
             set_name,
             nrdb_url,
             output_path,
+            upscale,
         } => {
             let source = determine_input_source(cardlist, set_name, nrdb_url);
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, source).await?;
 
-            let mpc_bytes = generate_mpc_zip(printings, image_provider, None)
+            let mpc_bytes = generate_mpc_zip(printings, image_provider, upscale, None)
                 .await
                 .context("Failed to generate MPC ZIP")?;
 

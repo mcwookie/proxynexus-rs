@@ -31,3 +31,4 @@ venv/*
 **.zip
 
 proxynexus-gui/public/card_backs/
+*.bpk

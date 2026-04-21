@@ -13,3 +13,6 @@ web-time = "1.1"
 tracing = "0.1.44"
 image = "0.25.10"
 anyhow = "1.0.102"
+
+[features]
+upscaling = ["proxynexus-core/upscaling"]

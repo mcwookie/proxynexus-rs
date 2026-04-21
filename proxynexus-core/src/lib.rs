@@ -16,3 +16,21 @@ pub mod netrunnerdb;
 pub mod pdf;
 pub mod print_prep;
 pub mod query;
+
+#[cfg(feature = "upscaling")]
+pub mod upscaler;
+
+pub async fn upscale_image(bytes: &[u8]) -> error::Result<Vec<u8>> {
+    #[cfg(feature = "upscaling")]
+    {
+        upscaler::upscale_image(bytes).await
+    }
+
+    #[cfg(not(feature = "upscaling"))]
+    {
+        let _ = bytes;
+        Err(error::ProxyNexusError::Internal(
+            "AI upscaling is not enabled in this build. Rebuild with '--features upscaling' to enable it.".to_string()
+        ))
+    }
+}

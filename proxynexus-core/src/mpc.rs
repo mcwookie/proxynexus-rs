@@ -13,6 +13,7 @@ use zip::write::SimpleFileOptions;
 pub async fn generate_mpc_zip(
     printings: Vec<Printing>,
     image_provider: &impl ImageProvider,
+    upscale: bool,
     progress: Option<Box<dyn Fn(f32) + Send + Sync>>,
 ) -> Result<Vec<u8>> {
     let total_images: usize = printings.iter().map(|p| 1 + p.parts.len()).sum();
@@ -42,6 +43,7 @@ pub async fn generate_mpc_zip(
         process_side(
             side_printings,
             image_provider,
+            upscale,
             &mut zip,
             &folder_name,
             &mut image_cache,
@@ -114,6 +116,7 @@ pub async fn generate_mpc_zip(
 async fn process_side<W: Write + Seek>(
     printings: Vec<Printing>,
     image_provider: &impl ImageProvider,
+    upscale: bool,
     zip: &mut ZipWriter<W>,
     folder_name: &str,
     image_cache: &mut HashMap<String, (image::RgbImage, ImageFormat)>,
@@ -144,9 +147,14 @@ async fn process_side<W: Write + Seek>(
             let start = Instant::now();
 
             if !image_cache.contains_key(&current_image_key) {
-                let data = image_provider.get_image_bytes(&current_image_key).await?;
-                let image_format = image::guess_format(&data).unwrap_or(ImageFormat::Jpeg);
-                let img = image::load_from_memory(&data)
+                let mut image_data = image_provider.get_image_bytes(&current_image_key).await?;
+
+                if upscale {
+                    image_data = crate::upscale_image(&image_data).await?
+                }
+
+                let image_format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
+                let img = image::load_from_memory(&image_data)
                     .map_err(|e| ProxyNexusError::Internal(e.to_string()))?;
                 let bleed_image = print_prep::add_bleed_border(&img);
                 image_cache.insert(current_image_key.clone(), (bleed_image, image_format));

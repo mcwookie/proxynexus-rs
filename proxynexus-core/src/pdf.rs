@@ -90,6 +90,7 @@ pub struct PdfOptions {
     pub cut_lines: CutLines,
     pub print_layout: PrintLayout,
     pub cut_line_thickness: f32,
+    pub upscale: bool,
 }
 
 impl Default for PdfOptions {
@@ -169,7 +170,12 @@ pub async fn generate_pdf(
             let start = Instant::now();
 
             if !image_cache.contains_key(image_key) {
-                let image_data = image_provider.get_image_bytes(image_key).await?;
+                let mut image_data = image_provider.get_image_bytes(image_key).await?;
+
+                if options.upscale {
+                    image_data = crate::upscale_image(&image_data).await?
+                }
+
                 let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
 
                 let image = if format == ImageFormat::Png {
