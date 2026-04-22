@@ -1,4 +1,6 @@
+use crate::export::ExportOptions;
 use dioxus::prelude::*;
+use proxynexus_core::mpc::MpcOptions;
 use proxynexus_core::pdf::{
     CutLines, DEFAULT_CUT_LINE_THICKNESS, MAX_CUT_LINE_THICKNESS, MIN_CUT_LINE_THICKNESS, PageSize,
     PdfOptions, PrintLayout,
@@ -21,12 +23,6 @@ pub enum PageSizePreset {
 pub enum CustomUnit {
     In,
     Cm,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum ExportConfig {
-    Pdf(PdfOptions),
-    Mpc,
 }
 
 #[derive(Props, Clone, PartialEq, Debug)]
@@ -75,8 +71,9 @@ fn SegmentedControl<T: PartialEq + Copy + 'static>(props: SegmentedControlProps<
 pub struct ExportControlsProps {
     pub progress: Signal<Option<f32>>,
     pub is_disabled: bool,
-    pub on_generate: EventHandler<ExportConfig>,
+    pub on_generate: EventHandler<ExportOptions>,
     pub on_open_info: EventHandler<(f64, f64, f64)>,
+    pub on_open_upscale_info: EventHandler<(f64, f64, f64)>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -93,6 +90,7 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
     let mut cut_lines = use_signal(CutLines::default);
     let mut cut_line_thickness = use_signal(|| DEFAULT_CUT_LINE_THICKNESS.to_string());
     let mut print_layout = use_signal(PrintLayout::default);
+    let mut upscale = use_signal(|| false);
 
     let thickness_value = use_memo(move || {
         cut_line_thickness()
@@ -106,6 +104,7 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
     let mut custom_unit = use_signal(|| CustomUnit::In);
 
     let is_generating = (props.progress)().is_some();
+    let is_gpu_available = proxynexus_core::is_gpu_available();
 
     let page_size_validation = use_memo(move || -> PageSizeValidation {
         match page_size_preset() {
@@ -356,46 +355,103 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
                 }
             } else {
                 div {
-                    class: "mt-auto pt-4 md:pt-0",
-                    {
-                        let thickness_invalid = cut_lines() == CutLines::FullPage && thickness_value().is_none();
-                        let disabled = props.is_disabled || thickness_invalid;
-                        let btn_base = "w-full py-1.5 md:py-2 px-3 md:px-4 font-semibold rounded-md shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 text-xs md:text-sm";
-                        let btn_state = if disabled {
-                            "bg-gray-300 text-gray-500 cursor-not-allowed"
-                        } else {
-                            "bg-blue-600 hover:bg-blue-700 text-white"
-                        };
+                    class: "mt-auto pt-4 md:pt-0 flex items-center gap-3 md:gap-4",
 
-                        rsx! {
-                            button {
-                                class: "{btn_base} {btn_state}",
-                                disabled,
-                                onclick: move |_| {
-                                    if disabled { return; }
-                                    let config = match export_format() {
-                                        ExportFormat::Mpc => ExportConfig::Mpc,
-                                        ExportFormat::Pdf => {
-                                            let Some(page_size) = validation.result else { return };
-                                            let thickness = match cut_lines() {
-                                                CutLines::None => 0.0,
-                                                CutLines::Margins => DEFAULT_CUT_LINE_THICKNESS,
-                                                CutLines::FullPage => match thickness_value() {
-                                                    Some(t) => t,
-                                                    None => return,
-                                                },
-                                            };
-                                            ExportConfig::Pdf(PdfOptions {
-                                                page_size,
-                                                cut_lines: cut_lines(),
-                                                print_layout: print_layout(),
-                                                cut_line_thickness: thickness,
-                                            })
-                                        }
-                                    };
-                                    props.on_generate.call(config);
-                                },
-                                "Generate"
+                    div { class: "flex flex-col items-center gap-1 shrink-0",
+                        div {
+                            class: "flex items-center gap-1 cursor-help group",
+                            onclick: move |_| {
+                                spawn(async move {
+                                    let mut eval = dioxus::document::eval(
+                                        "
+                                        let el = document.getElementById('upscale-info-btn');
+                                        let rect = el.getBoundingClientRect();
+                                        dioxus.send([rect.x, rect.y, rect.width]);
+                                        ",
+                                    );
+                                    if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
+                                        props.on_open_upscale_info.call((x, y, w));
+                                    }
+                                });
+                            },
+                            label { class: "text-xs md:text-sm font-medium text-gray-700 group-hover:text-blue-600 transition-colors cursor-help", "Upscale" }
+                            div {
+                                id: "upscale-info-btn",
+                                class: "text-gray-400 group-hover:text-blue-500 transition-colors",
+                                svg {
+                                    xmlns: "http://www.w3.org/2000/svg",
+                                    width: "12",
+                                    height: "12",
+                                    view_box: "0 0 24 24",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "2.5",
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    circle { cx: "12", cy: "12", r: "10" }
+                                    path { d: "M12 16v-4" }
+                                    path { d: "M12 8h.01" }
+                                }
+                            }
+                        }
+
+                        button {
+                            class: format!("relative inline-flex h-4 w-8 items-center rounded-full transition-colors focus:outline-none {}",
+                                if upscale() { "bg-blue-600" } else { "bg-gray-300" }),
+                            disabled: !is_gpu_available,
+                            onclick: move |_| upscale.set(!upscale()),
+                            span {
+                                class: format!("inline-block h-3 w-3 transform rounded-full bg-white transition-transform shadow-sm {}",
+                                    if upscale() { "translate-x-4.5" } else { "translate-x-0.5" }),
+                            }
+                        }
+                    }
+
+                    div {
+                        class: "flex-1",
+                        {
+                            let thickness_invalid = cut_lines() == CutLines::FullPage && thickness_value().is_none();
+                            let disabled = props.is_disabled || thickness_invalid;
+                            let btn_base = "w-full py-1.5 md:py-2 px-3 md:px-4 font-semibold rounded-md shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 text-xs md:text-sm";
+                            let btn_state = if disabled {
+                                "bg-gray-300 text-gray-500 cursor-not-allowed"
+                            } else {
+                                "bg-blue-600 hover:bg-blue-700 text-white"
+                            };
+
+                            rsx! {
+                                button {
+                                    class: "{btn_base} {btn_state}",
+                                    disabled,
+                                    onclick: move |_| {
+                                        if disabled { return; }
+                                        let options = match export_format() {
+                                            ExportFormat::Mpc => {
+                                                ExportOptions::Mpc(MpcOptions { upscale: upscale() })
+                                            }
+                                            ExportFormat::Pdf => {
+                                                let Some(page_size) = validation.result else { return };
+                                                let thickness = match cut_lines() {
+                                                    CutLines::None => 0.0,
+                                                    CutLines::Margins => DEFAULT_CUT_LINE_THICKNESS,
+                                                    CutLines::FullPage => match thickness_value() {
+                                                        Some(t) => t,
+                                                        None => return,
+                                                    },
+                                                };
+                                                ExportOptions::Pdf(PdfOptions {
+                                                    page_size,
+                                                    cut_lines: cut_lines(),
+                                                    print_layout: print_layout(),
+                                                    cut_line_thickness: thickness,
+                                                    upscale: upscale(),
+                                                })
+                                            }
+                                        };
+                                        props.on_generate.call(options);
+                                    },
+                                    "Generate"
+                                }
                             }
                         }
                     }

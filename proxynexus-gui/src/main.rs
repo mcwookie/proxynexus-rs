@@ -21,6 +21,7 @@ use components::export_controls::ExportControls;
 use components::preview_grid::PreviewGrid;
 use components::print_layout_info::PrintLayoutInfo;
 use components::source_selector::{ActiveSource, SourceSelector};
+use components::upscale_info::UpscaleInfo;
 use components::variant_selector::{VariantSelector, VariantSelectorState};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -249,6 +250,7 @@ fn Workspace(db_signal: Signal<DbStorage>) -> Element {
     let mut is_overrides_reset_pending = use_signal(|| false);
     let mut is_about_open = use_signal(|| false);
     let mut print_layout_info_pos = use_signal(|| None::<(f64, f64, f64)>);
+    let mut upscale_info_pos = use_signal(|| None::<(f64, f64, f64)>);
 
     use_effect(move || {
         let current_source = active_source();
@@ -404,7 +406,7 @@ fn Workspace(db_signal: Signal<DbStorage>) -> Element {
 
     rsx! {
         div {
-            class: "absolute inset-0 flex flex-col md:flex-row overflow-hidden select-none bg-gray-50",
+            class: "absolute inset-0 flex flex-col md:flex-row bg-gray-50",
             onclick: move |_| open_variant_selector.set(None),
             onwheel: move |_| open_variant_selector.set(None),
 
@@ -466,12 +468,13 @@ fn Workspace(db_signal: Signal<DbStorage>) -> Element {
                     progress,
                     is_disabled: is_generate_disabled,
                     on_open_info: move |pos| print_layout_info_pos.set(Some(pos)),
-                    on_generate: move |config: components::export_controls::ExportConfig| {
+                    on_open_upscale_info: move |pos| upscale_info_pos.set(Some(pos)),
+                    on_generate: move |options: export::ExportOptions| {
                         let source = active_source();
                         spawn(export::run_export(
                             db_signal,
                             source,
-                            config,
+                            options,
                             progress,
                             global_overrides.read().clone(),
                             index_overrides.read().clone(),
@@ -492,6 +495,13 @@ fn Workspace(db_signal: Signal<DbStorage>) -> Element {
                 PrintLayoutInfo {
                     pos,
                     on_close: move |_| print_layout_info_pos.set(None),
+                }
+            }
+
+            if let Some(pos) = upscale_info_pos() {
+                UpscaleInfo {
+                    pos,
+                    on_close: move |_| upscale_info_pos.set(None),
                 }
             }
         }

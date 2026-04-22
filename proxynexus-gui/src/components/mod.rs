@@ -4,6 +4,7 @@ pub mod export_controls;
 pub mod preview_grid;
 pub mod print_layout_info;
 pub mod source_selector;
+pub mod upscale_info;
 pub mod variant_selector;
 
 pub(crate) fn build_image_url(image_key: &str) -> String {

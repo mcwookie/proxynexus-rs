@@ -1,4 +1,4 @@
-use proxynexus_core::pdf::PdfOptions;
+use crate::export::ExportOptions;
 use serde::Serialize;
 use serde_json::json;
 use std::sync::{Mutex, OnceLock};
@@ -14,7 +14,7 @@ static DISTINCT_ID: OnceLock<String> = OnceLock::new();
 #[derive(Serialize)]
 pub struct GenerationReport {
     pub format: String,
-    pub options: Option<PdfOptions>,
+    pub options: ExportOptions,
     pub runtime_ms: u128,
     pub success: bool,
     pub source_type: &'static str,

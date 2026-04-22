@@ -34,3 +34,21 @@ pub async fn upscale_image(bytes: &[u8]) -> error::Result<Vec<u8>> {
         ))
     }
 }
+
+pub fn is_gpu_available() -> bool {
+    #[cfg(feature = "upscaling")]
+    {
+        #[cfg(target_arch = "wasm32")]
+        {
+            upscaler::is_webgpu_available()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            true
+        }
+    }
+    #[cfg(not(feature = "upscaling"))]
+    {
+        false
+    }
+}

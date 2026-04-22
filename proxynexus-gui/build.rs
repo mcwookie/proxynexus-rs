@@ -32,4 +32,16 @@ fn main() {
             }
         }
     }
+
+    if let Ok(bpk_path_str) = std::env::var("DEP_PROXYNEXUS_CORE_METADATA_MODEL_WEIGHTS_PATH") {
+        let bpk_path = Path::new(&bpk_path_str);
+        if bpk_path.exists() {
+            let dest_path = Path::new(&manifest_dir)
+                .join("public")
+                .join("realesr-general-x4v3.bpk");
+            fs::copy(bpk_path, &dest_path).expect("Failed to pull model weights from core");
+
+            println!("cargo:rerun-if-changed={}", bpk_path_str);
+        }
+    }
 }

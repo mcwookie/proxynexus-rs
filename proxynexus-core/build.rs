@@ -13,7 +13,7 @@ fn main() {
 
         let bpk_path = std::path::Path::new(&out_dir).join("realesr-general-x4v3.bpk");
         if bpk_path.exists() {
-            println!("cargo:metadata_bpk_path={}", bpk_path.display());
+            println!("cargo:metadata_model_weights_path={}", bpk_path.display());
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::image_provider::ImageProvider;
 use crate::models::Printing;
 use crate::print_prep;
 use image::ImageFormat;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Cursor, Seek, Write};
 use tracing::info;
@@ -10,10 +11,15 @@ use web_time::Instant;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct MpcOptions {
+    pub upscale: bool,
+}
+
 pub async fn generate_mpc_zip(
     printings: Vec<Printing>,
     image_provider: &impl ImageProvider,
-    upscale: bool,
+    options: MpcOptions,
     progress: Option<Box<dyn Fn(f32) + Send + Sync>>,
 ) -> Result<Vec<u8>> {
     let total_images: usize = printings.iter().map(|p| 1 + p.parts.len()).sum();
@@ -43,7 +49,7 @@ pub async fn generate_mpc_zip(
         process_side(
             side_printings,
             image_provider,
-            upscale,
+            options,
             &mut zip,
             &folder_name,
             &mut image_cache,
@@ -116,7 +122,7 @@ pub async fn generate_mpc_zip(
 async fn process_side<W: Write + Seek>(
     printings: Vec<Printing>,
     image_provider: &impl ImageProvider,
-    upscale: bool,
+    options: MpcOptions,
     zip: &mut ZipWriter<W>,
     folder_name: &str,
     image_cache: &mut HashMap<String, (image::RgbImage, ImageFormat)>,
@@ -149,7 +155,7 @@ async fn process_side<W: Write + Seek>(
             if !image_cache.contains_key(&current_image_key) {
                 let mut image_data = image_provider.get_image_bytes(&current_image_key).await?;
 
-                if upscale {
+                if options.upscale {
                     image_data = crate::upscale_image(&image_data).await?
                 }
 

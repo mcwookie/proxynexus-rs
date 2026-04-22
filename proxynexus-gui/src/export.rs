@@ -1,25 +1,30 @@
 #![allow(clippy::await_holding_invalid_type)]
-
 use crate::analytics;
-use crate::components::export_controls::ExportConfig;
 use crate::components::source_selector::ActiveSource;
 use anyhow::Context;
 use dioxus::prelude::*;
 use proxynexus_core::card_source::{CardSource, Cardlist, NrdbUrl, SetName};
 use proxynexus_core::db_storage::DbStorage;
-use proxynexus_core::mpc::generate_mpc_zip;
-use proxynexus_core::pdf::PdfOptions;
-use proxynexus_core::pdf::generate_pdf;
+use proxynexus_core::mpc::{MpcOptions, generate_mpc_zip};
+use proxynexus_core::pdf::{PdfOptions, generate_pdf};
 use proxynexus_core::query::apply_variant_overrides;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{error, info};
 use web_time::Instant;
 
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum ExportOptions {
+    Pdf(PdfOptions),
+    Mpc(MpcOptions),
+}
+
 struct ExportMeta {
     format: &'static str,
-    options: Option<PdfOptions>,
+    options: ExportOptions,
     filename: &'static str,
     filter: &'static str,
     ext: &'static str,
@@ -29,7 +34,7 @@ struct ExportMeta {
 pub async fn run_export(
     mut db_signal: Signal<DbStorage>,
     active_source: ActiveSource,
-    config: ExportConfig,
+    options: ExportOptions,
     mut progress_signal: Signal<Option<f32>>,
     global_overrides: HashMap<String, String>,
     index_overrides: HashMap<(String, usize), String>,
@@ -58,18 +63,18 @@ pub async fn run_export(
         }
     }));
 
-    let meta = match config.clone() {
-        ExportConfig::Pdf(options) => ExportMeta {
+    let meta = match options.clone() {
+        ExportOptions::Pdf(pdf_opts) => ExportMeta {
             format: "pdf",
-            options: Some(options),
+            options: ExportOptions::Pdf(pdf_opts),
             filename: "proxynexus_export.pdf",
             filter: "PDF Document",
             ext: "pdf",
             mime: "application/pdf",
         },
-        ExportConfig::Mpc => ExportMeta {
+        ExportOptions::Mpc(mpc_opts) => ExportMeta {
             format: "mpc",
-            options: None,
+            options: ExportOptions::Mpc(mpc_opts),
             filename: "proxynexus_export.zip",
             filter: "ZIP Archive",
             ext: "zip",
@@ -152,15 +157,17 @@ pub async fn run_export(
     let image_provider_result = Ok(proxynexus_core::image_provider::RemoteImageProvider);
 
     let result = match (resolved_printings, image_provider_result) {
-        (Ok(printings), Ok(image_provider)) => match config {
-            ExportConfig::Pdf(options) => {
-                generate_pdf(printings, &image_provider, options, progress_callback)
+        (Ok(printings), Ok(image_provider)) => match options {
+            ExportOptions::Pdf(pdf_opts) => {
+                generate_pdf(printings, &image_provider, pdf_opts, progress_callback)
                     .await
                     .context("PDF generation failed")
             }
-            ExportConfig::Mpc => generate_mpc_zip(printings, &image_provider, progress_callback)
-                .await
-                .context("MPC ZIP generation failed"),
+            ExportOptions::Mpc(mpc_opts) => {
+                generate_mpc_zip(printings, &image_provider, mpc_opts, progress_callback)
+                    .await
+                    .context("MPC ZIP generation failed")
+            }
         },
         (Err(e), _) => Err(e),
         (_, Err(e)) => Err(e),
