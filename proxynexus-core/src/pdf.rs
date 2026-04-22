@@ -100,6 +100,7 @@ impl Default for PdfOptions {
             cut_lines: CutLines::default(),
             print_layout: PrintLayout::default(),
             cut_line_thickness: DEFAULT_CUT_LINE_THICKNESS,
+            upscale: false,
         }
     }
 }
@@ -397,12 +398,13 @@ fn calculate_full_page_cutlines(options: &PdfOptions) -> Vec<Path> {
 mod tests {
     use super::*;
 
-    fn opts(cut_lines: CutLines, print_layout: PrintLayout, thickness: f32) -> PdfOptions {
+    fn opts(cut_lines: CutLines, print_layout: PrintLayout, thickness: f32, upscale: bool) -> PdfOptions {
         PdfOptions {
             page_size: PageSize::Letter,
             cut_lines,
             print_layout,
             cut_line_thickness: thickness,
+            upscale,
         }
     }
 
@@ -428,7 +430,8 @@ mod tests {
             opts(
                 CutLines::None,
                 PrintLayout::EdgeToEdge,
-                MAX_CUT_LINE_THICKNESS
+                MAX_CUT_LINE_THICKNESS,
+                false,
             )
             .effective_gap(),
             base,
@@ -437,7 +440,8 @@ mod tests {
             opts(
                 CutLines::Margins,
                 PrintLayout::EdgeToEdge,
-                MAX_CUT_LINE_THICKNESS
+                MAX_CUT_LINE_THICKNESS,
+                false,
             )
             .effective_gap(),
             base,
@@ -446,7 +450,7 @@ mod tests {
 
     #[test]
     fn effective_gap_widens_for_full_page_when_thickness_exceeds_base() {
-        let o = opts(CutLines::FullPage, PrintLayout::EdgeToEdge, 3.0);
+        let o = opts(CutLines::FullPage, PrintLayout::EdgeToEdge, 3.0, false,);
         assert_eq!(o.effective_gap(), 3.0);
     }
 
@@ -459,7 +463,8 @@ mod tests {
             opts(
                 CutLines::FullPage,
                 PrintLayout::Gap,
-                DEFAULT_CUT_LINE_THICKNESS
+                DEFAULT_CUT_LINE_THICKNESS,
+                false,
             )
             .effective_gap(),
             base,
@@ -472,11 +477,13 @@ mod tests {
             CutLines::FullPage,
             PrintLayout::EdgeToEdge,
             DEFAULT_CUT_LINE_THICKNESS,
+            false,
         );
         let thick = opts(
             CutLines::FullPage,
             PrintLayout::EdgeToEdge,
             MAX_CUT_LINE_THICKNESS,
+            false,
         );
         let (thin_rows, thin_cols) = thin.capacity();
         let (thick_rows, thick_cols) = thick.capacity();
@@ -494,11 +501,13 @@ mod tests {
             CutLines::Margins,
             PrintLayout::EdgeToEdge,
             MIN_CUT_LINE_THICKNESS,
+            false,
         );
         let thick = opts(
             CutLines::Margins,
             PrintLayout::EdgeToEdge,
             MAX_CUT_LINE_THICKNESS,
+            false,
         );
         assert_eq!(thin.capacity(), thick.capacity());
     }
