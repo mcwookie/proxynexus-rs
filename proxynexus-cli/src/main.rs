@@ -470,9 +470,14 @@ async fn handle_generate(
 
             let printings = get_printings_from_source(db, source).await?;
 
-            let mpc_bytes = generate_mpc_zip(printings, image_provider, upscale, None)
-                .await
-                .context("Failed to generate MPC ZIP")?;
+            let mpc_bytes = generate_mpc_zip(
+                printings,
+                image_provider,
+                proxynexus_core::mpc::MpcOptions { upscale },
+                None,
+            )
+            .await
+            .context("Failed to generate MPC ZIP")?;
 
             std::fs::write(&output_path, mpc_bytes)
                 .with_context(|| format!("Failed to write ZIP to {:?}", output_path))?;
