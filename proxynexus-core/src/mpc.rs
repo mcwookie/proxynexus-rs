@@ -164,6 +164,8 @@ async fn process_side<W: Write + Seek>(
                     .map_err(|e| ProxyNexusError::Internal(e.to_string()))?;
                 let bleed_image = print_prep::add_bleed_border(&img);
                 image_cache.insert(current_image_key.clone(), (bleed_image, image_format));
+            } else {
+                info!("cache hit for {}", current_image_key);
             }
 
             let (bleed_image, image_format) = image_cache.get(&current_image_key).unwrap();

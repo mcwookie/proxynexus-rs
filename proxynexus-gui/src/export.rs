@@ -173,6 +173,8 @@ pub async fn run_export(
         (_, Err(e)) => Err(e),
     };
 
+    let duration = start_time.elapsed();
+
     let mut success = false;
     let mut error_message = None;
 
@@ -180,9 +182,10 @@ pub async fn run_export(
         Ok(bytes) => {
             success = true;
             info!(
-                "Successfully generated {}. Size: {} bytes",
+                "Successfully generated {}. Size: {} bytes. Total time: {:?}",
                 meta.format,
-                bytes.len()
+                bytes.len(),
+                duration
             );
         }
         Err(e) => {

@@ -188,6 +188,8 @@ pub async fn generate_pdf(
                 };
 
                 image_cache.insert(image_key.clone(), image);
+            } else {
+                info!("cache hit for {}", image_key);
             }
 
             let image = image_cache.get(image_key).unwrap().clone();
