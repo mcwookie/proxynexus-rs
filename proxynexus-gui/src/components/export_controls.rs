@@ -104,7 +104,7 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
     let mut custom_unit = use_signal(|| CustomUnit::In);
 
     let is_generating = (props.progress)().is_some();
-    let is_gpu_available = proxynexus_core::is_gpu_available();
+    let is_gpu_available = *crate::GPU_AVAILABLE.read();
 
     let page_size_validation = use_memo(move || -> PageSizeValidation {
         match page_size_preset() {

@@ -27,6 +27,8 @@ use components::variant_selector::{VariantSelector, VariantSelectorState};
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
+pub static GPU_AVAILABLE: GlobalSignal<bool> = Signal::global(|| false);
+
 async fn sleep(ms: u64) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -227,6 +229,8 @@ fn App() -> Element {
                     error!("WASM Hydration failed: {:?}", e);
                 }
             }
+
+            *GPU_AVAILABLE.write() = proxynexus_core::probe_gpu().await;
 
             db_ready.set(true);
         });

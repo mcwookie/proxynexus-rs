@@ -50,7 +50,7 @@ fn get_browser() -> Browser {
 #[component]
 pub fn UpscaleInfo(props: UpscaleInfoProps) -> Element {
     let (x, y, w) = props.pos;
-    let is_gpu_available = proxynexus_core::is_gpu_available();
+    let is_gpu_available = *crate::GPU_AVAILABLE.read();
     let browser = get_browser();
     let is_web = cfg!(target_arch = "wasm32");
 
@@ -80,9 +80,9 @@ pub fn UpscaleInfo(props: UpscaleInfoProps) -> Element {
                     div {
                         h4 { class: "font-semibold mb-1", "Upscaling" }
                         p { class: "text-gray-600 leading-relaxed",
-                            "Uses a Real-ESRGAN-based model to upscale card images. It doesn't just resize, it reconstructs fine detail, improving clarity for text, edges, and artwork. "
+                            "Uses a Real-ESRGAN-based model to upscale card images. It doesn't just resize, it reconstructs detail, improving clarity for text, edges, and artwork. "
                             if is_web && is_gpu_available {
-                                "Runs locally in your browser using your GPU."
+                                "Runs locally in your browser using your GPU, so expect it to take more time. "
                             }
                         }
                     }

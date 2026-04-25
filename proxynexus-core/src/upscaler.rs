@@ -48,11 +48,41 @@ pub mod model {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn is_webgpu_available() -> bool {
-    web_sys::window().is_some_and(|w| {
-        let nav = w.navigator();
-        js_sys::Reflect::has(&nav, &"gpu".into()).unwrap_or(false)
-    })
+pub async fn probe_webgpu() -> bool {
+    use js_sys::{Function, Promise, Reflect};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+
+    let available = async {
+        let window = web_sys::window()?;
+        let nav = window.navigator();
+        let gpu = Reflect::get(&nav, &"gpu".into()).ok()?;
+        if gpu.is_undefined() || gpu.is_null() {
+            return None;
+        }
+        let request_adapter_fn: Function = Reflect::get(&gpu, &"requestAdapter".into())
+            .ok()?
+            .dyn_into()
+            .ok()?;
+        let adapter_promise: Promise = request_adapter_fn.call0(&gpu).ok()?.dyn_into().ok()?;
+        let adapter = JsFuture::from(adapter_promise).await.ok()?;
+        if adapter.is_null() || adapter.is_undefined() {
+            return None;
+        }
+        let request_device_fn: Function = Reflect::get(&adapter, &"requestDevice".into())
+            .ok()?
+            .dyn_into()
+            .ok()?;
+        let device_promise: Promise = request_device_fn.call0(&adapter).ok()?.dyn_into().ok()?;
+        let device = JsFuture::from(device_promise).await.ok()?;
+        if device.is_null() || device.is_undefined() {
+            return None;
+        }
+        Some(())
+    }
+    .await;
+
+    available.is_some()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

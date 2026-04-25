@@ -35,17 +35,14 @@ pub async fn upscale_image(bytes: &[u8]) -> error::Result<Vec<u8>> {
     }
 }
 
-pub fn is_gpu_available() -> bool {
-    #[cfg(feature = "upscaling")]
+pub async fn probe_gpu() -> bool {
+    #[cfg(all(feature = "upscaling", target_arch = "wasm32"))]
     {
-        #[cfg(target_arch = "wasm32")]
-        {
-            upscaler::is_webgpu_available()
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            true
-        }
+        upscaler::probe_webgpu().await
+    }
+    #[cfg(all(feature = "upscaling", not(target_arch = "wasm32")))]
+    {
+        true
     }
     #[cfg(not(feature = "upscaling"))]
     {
