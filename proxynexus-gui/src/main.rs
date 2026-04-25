@@ -151,6 +151,13 @@ fn main() {
 
     #[cfg(feature = "web")]
     {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if web_sys::window().is_none() {
+                // So not start the Dioxus UI in a web worker
+                return;
+            }
+        }
         launch(App);
     }
 }

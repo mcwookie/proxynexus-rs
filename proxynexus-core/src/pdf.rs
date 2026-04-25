@@ -398,7 +398,12 @@ fn calculate_full_page_cutlines(options: &PdfOptions) -> Vec<Path> {
 mod tests {
     use super::*;
 
-    fn opts(cut_lines: CutLines, print_layout: PrintLayout, thickness: f32, upscale: bool) -> PdfOptions {
+    fn opts(
+        cut_lines: CutLines,
+        print_layout: PrintLayout,
+        thickness: f32,
+        upscale: bool,
+    ) -> PdfOptions {
         PdfOptions {
             page_size: PageSize::Letter,
             cut_lines,
@@ -450,7 +455,7 @@ mod tests {
 
     #[test]
     fn effective_gap_widens_for_full_page_when_thickness_exceeds_base() {
-        let o = opts(CutLines::FullPage, PrintLayout::EdgeToEdge, 3.0, false,);
+        let o = opts(CutLines::FullPage, PrintLayout::EdgeToEdge, 3.0, false);
         assert_eq!(o.effective_gap(), 3.0);
     }
 
