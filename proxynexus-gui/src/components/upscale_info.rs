@@ -100,33 +100,37 @@ pub fn UpscaleInfo(props: UpscaleInfoProps) -> Element {
                     }
 
                     if is_web && !is_gpu_available {
-                        div { class: "flex flex-col gap-1 border-t border-gray-100",
-                            p { class: "text-gray-700 font-medium",
-                                "Requires WebGPU to be enabled in your browser."
-                            }
+                        div { class: "flex flex-col gap-1 border-t border-gray-100 pt-2",
+                            if browser == Browser::Mobile {
+                                p { class: "text-gray-700 font-medium",
+                                    "WebGPU is not enabled or not supported by your mobile browser."
+                                }
+                            } else {
+                                p { class: "text-gray-700 font-medium",
+                                    "Requires WebGPU to be enabled in your browser."
+                                }
 
-                            div { class: "bg-gray-50 p-3 rounded border border-gray-200 text-gray-600 space-y-2",
-                                match browser {
-                                    Browser::Chrome => rsx! {
-                                        p { "1. Paste or type " span { class: "font-mono", "chrome://flags/#enable-unsafe-webgpu" } " in the address bar and press Enter." }
-                                        p { "2. Set " span { class: "font-bold text-gray-700", "Unsafe WebGPU Support" } " to " span { class: "font-bold text-gray-700", "Enabled" } "." }
-                                        p { "3. Reload " span { class: "font-mono", "https://proxynexus.net" } "." }
-                                    },
-                                    Browser::Firefox => rsx! {
-                                        p { "1. Paste or type " span { class: "font-mono", "about:config" } " in the address bar and press Enter." }
-                                        p { "2. Click \"Accept the Risk and Continue\"." }
-                                        p { "3. Search for " span { class: "font-mono", "dom.webgpu.enabled" } " and set to " span { class: "font-bold text-gray-700", "true" } "." }
-                                        p { "4. Reload " span { class: "font-mono", "https://proxynexus.net" } "." }
-                                    },
-                                    Browser::Safari => rsx! {
-                                        p { "1. Safari → Settings → Advanced → " span { class: "font-bold text-gray-700", "\"Show features for web developers\"" } "." }
-                                        p { "2. Develop → Experimental Features → " span { class: "font-bold text-gray-700", "WebGPU" } "." }
-                                    },
-                                    Browser::Mobile => rsx! {
-                                        p { class: "italic", "Upscaling is not supported on mobile browsers. Please use a desktop browser to enable upscaling." }
-                                    },
-                                    Browser::Other => rsx! {
-                                        p { "Please check your browser settings or experimental flags to enable WebGPU support." }
+                                div { class: "bg-gray-50 p-3 rounded border border-gray-200 text-gray-600 space-y-2 mt-1",
+                                    match browser {
+                                        Browser::Chrome => rsx! {
+                                            p { "1. Paste or type " span { class: "font-mono", "chrome://flags/#enable-unsafe-webgpu" } " in the address bar and press Enter." }
+                                            p { "2. Set " span { class: "font-bold text-gray-700", "Unsafe WebGPU Support" } " to " span { class: "font-bold text-gray-700", "Enabled" } "." }
+                                            p { "3. Reload " span { class: "font-mono", "https://proxynexus.net" } "." }
+                                        },
+                                        Browser::Firefox => rsx! {
+                                            p { "1. Paste or type " span { class: "font-mono", "about:config" } " in the address bar and press Enter." }
+                                            p { "2. Click \"Accept the Risk and Continue\"." }
+                                            p { "3. Search for " span { class: "font-mono", "dom.webgpu.enabled" } " and set to " span { class: "font-bold text-gray-700", "true" } "." }
+                                            p { "4. Reload " span { class: "font-mono", "https://proxynexus.net" } "." }
+                                        },
+                                        Browser::Safari => rsx! {
+                                            p { "1. Safari → Settings → Advanced → " span { class: "font-bold text-gray-700", "\"Show features for web developers\"" } "." }
+                                            p { "2. Develop → Experimental Features → " span { class: "font-bold text-gray-700", "WebGPU" } "." }
+                                        },
+                                        Browser::Other => rsx! {
+                                            p { "Please check your browser settings or experimental flags to enable WebGPU support." }
+                                        },
+                                        _ => rsx! {}
                                     }
                                 }
                             }
