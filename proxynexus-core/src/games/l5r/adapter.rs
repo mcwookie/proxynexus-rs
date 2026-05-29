@@ -1,4 +1,5 @@
 use crate::card_source::DecklistProvider;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
@@ -81,6 +82,7 @@ impl CatalogProvider for L5rAdapter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn build_title(name: &str, name_extra: Option<&str>) -> String {
     match name_extra {
         Some(extra) if !extra.is_empty() => format!("{} ({})", name, extra),
@@ -88,6 +90,7 @@ fn build_title(name: &str, name_extra: Option<&str>) -> String {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_position(s: Option<&str>) -> Option<i64> {
     s.and_then(|v| v.parse::<i64>().ok())
 }

@@ -1,11 +1,12 @@
 use crate::card_source::DecklistProvider;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
-use crate::games::netrunner::api::{
-    fetch_card_sets, fetch_cards, fetch_decklist_from_nrdb, fetch_printings,
-};
+use crate::games::netrunner::api::fetch_decklist_from_nrdb;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::games::netrunner::api::{fetch_card_sets, fetch_cards, fetch_printings};
 use crate::models::Decklist;
 use crate::mpc::CardBackProvider;
 use async_trait::async_trait;
