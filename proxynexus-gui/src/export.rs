@@ -145,7 +145,12 @@ pub async fn run_export(
                     .as_deref()
                     .or(p.variant.as_deref())
                     .unwrap_or("official");
-                format!("{} [{}:{}]", p.card_title, p_display, p.collection)
+
+                let mut base_string = format!("{} [{}:{}]", p.card_title, p_display, p.collection);
+                if !p.is_official {
+                    base_string.push_str(" (unofficial)");
+                }
+                base_string
             })
             .collect()
     } else {
