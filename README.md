@@ -195,6 +195,25 @@ Query Results:
 ```
 The quantity comes from the pack's metadata from the game's API. The output of this query is a valid card list.
 
+#### Creating Shareable Links
+
+Once a game and cards are shown in the preview area, the current selection can be preserved by clicking the link
+icon near the top right. This copies a URL containing all the cards and selected printings to the clipboard.
+
+This URL format can also be contructed externally, so that Proxy Nexus can load with a specific card list. 
+
+**URL Schema:**
+`https://proxynexus.net/?v=1&game={game_id}&list={url_encoded_list}`
+
+*   **`v=1`**: The schema version parameter.
+*   **`game`**: The ID of the game.
+*   **`list`**: A standard URL-encoded string following the Proxy Nexus printing notation.
+
+**Example:**
+```
+https://proxynexus.net/?v=1&game=netrunner&list=3x+Sure+Gamble+%5Bcore%3Affg-en%5D%0A1x+Hedge+Fund
+```
+
 #### Card Request Resolution
 
 Whether you're using the notation above in a card list, or selecting a set name, or a decklist URL, 

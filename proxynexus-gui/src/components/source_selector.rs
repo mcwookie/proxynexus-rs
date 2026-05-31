@@ -29,12 +29,23 @@ pub struct SourceSelectorProps {
 
 #[component]
 pub fn SourceSelector(props: SourceSelectorProps) -> Element {
-    let mut tab = use_signal(|| "list");
+    let mut tab = use_signal(|| match &*props.source_state.peek() {
+        ActiveSource::Cardlist(t) if !t.is_empty() => "list",
+        ActiveSource::SetName(t) if !t.is_empty() => "set",
+        ActiveSource::DecklistUrl(t) if !t.is_empty() => "decklist",
+        _ => "list",
+    });
     let db_signal = props.db_signal;
     let mut source_state = props.source_state;
     let active_game_id = props.active_game_id;
 
-    let mut list_text = use_signal(String::new);
+    let mut list_text = use_signal(|| {
+        if let ActiveSource::Cardlist(t) = &*props.source_state.peek() {
+            t.clone()
+        } else {
+            String::new()
+        }
+    });
     let mut set_name = use_signal(String::new);
     let mut decklist_url = use_signal(String::new);
 

@@ -250,11 +250,84 @@ fn App() -> Element {
     }
 }
 
+fn copy_selection_to_clipboard(game_id: &str, printings: &[Printing]) {
+    let mut list = String::new();
+    let mut current_title = String::new();
+    let mut current_count = 0;
+    let mut current_variant = String::new();
+
+    let mut flush = |count: usize, title: &str, variant: &str| {
+        if count > 0 {
+            list.push_str(&format!("{}x {} [{}]\n", count, title, variant));
+        }
+    };
+
+    for p in printings {
+        let p_display = p
+            .pack_id
+            .as_deref()
+            .or(p.variant.as_deref())
+            .unwrap_or("official");
+        let variant_str = format!("{}:{}", p_display, p.collection);
+
+        if p.card_title == current_title && variant_str == current_variant {
+            current_count += 1;
+        } else {
+            flush(current_count, &current_title, &current_variant);
+            current_title = p.card_title.clone();
+            current_variant = variant_str;
+            current_count = 1;
+        }
+    }
+    flush(current_count, &current_title, &current_variant);
+
+    let escaped_list = list
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
+
+    let eval_str = format!(
+        "
+        const list = `{}`;
+        const url = 'https://proxynexus.net/?v=1&game={}&list=' + encodeURIComponent(list);
+        navigator.clipboard.writeText(url);
+        ",
+        escaped_list, game_id
+    );
+    let _ = dioxus::document::eval(&eval_str);
+}
+
 #[component]
 fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let progress = use_signal(|| None::<f32>);
 
+    let (url_game, url_list) = {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(window) = web_sys::window() {
+                let params = window
+                    .location()
+                    .search()
+                    .ok()
+                    .and_then(|s| web_sys::UrlSearchParams::new_with_str(&s).ok())
+                    .filter(|p| p.get("v") == Some("1".to_string()));
+
+                let game = params.as_ref().and_then(|p| p.get("game"));
+                let list = params.as_ref().and_then(|p| p.get("list"));
+                (game, list)
+            } else {
+                (None, None)
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        (None::<String>, None::<String>)
+    };
+
     let mut active_game_id = use_signal(|| {
+        if url_game.is_some() {
+            return url_game;
+        }
+
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(window) = web_sys::window() {
@@ -291,7 +364,12 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         db.get_games().await.unwrap_or_default()
     });
 
-    let active_source = use_signal(ActiveSource::default);
+    let active_source = use_signal(|| {
+        if let Some(list) = url_list {
+            return ActiveSource::Cardlist(list);
+        }
+        ActiveSource::default()
+    });
     let mut debounced_source = use_signal(ActiveSource::default);
     let mut debounce_task = use_signal(|| None::<dioxus_core::Task>);
 
@@ -521,21 +599,54 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                             }
                         }
                     }
-                    button {
-                        class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0",
-                        onclick: move |_| is_about_open.set(true),
-                        title: "About Proxy Nexus",
-                        svg {
-                            class: "w-6 h-6",
-                            fill: "none",
-                            stroke: "currentColor",
-                            view_box: "0 0 24 24",
-                            stroke_width: "2",
-                            stroke_linecap: "round",
-                            stroke_linejoin: "round",
-                            circle { cx: "12", cy: "12", r: "10" }
-                            path { d: "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" }
-                            path { d: "M12 17h.01" }
+                    div {
+                        class: "flex items-center gap-3",
+                        if let Some(Ok((_, resolved_printing, _))) = ordered_printings.read().as_ref() {
+                            if !resolved_printing.is_empty() {
+                                button {
+                                    class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0 transition-colors group",
+                                    onclick: move |_| {
+                                        if let Some(game_id) = active_game_id() {
+                                            let printings_clone = if let Some(Ok((_, resolved_printing, _))) = ordered_printings.read().as_ref() {
+                                                resolved_printing.clone()
+                                            } else {
+                                                Vec::new()
+                                            };
+
+                                            copy_selection_to_clipboard(&game_id, &printings_clone);
+                                        }
+                                    },
+                                    title: "Copy Selection URL",
+                                    svg {
+                                        class: "w-5 h-5",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        view_box: "0 0 24 24",
+                                        stroke_width: "2",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        path { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }
+                                        path { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }
+                                    }
+                                }
+                            }
+                        }
+                        button {
+                            class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0",
+                            onclick: move |_| is_about_open.set(true),
+                            title: "About Proxy Nexus",
+                            svg {
+                                class: "w-6 h-6",
+                                fill: "none",
+                                stroke: "currentColor",
+                                view_box: "0 0 24 24",
+                                stroke_width: "2",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                circle { cx: "12", cy: "12", r: "10" }
+                                path { d: "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" }
+                                path { d: "M12 17h.01" }
+                            }
                         }
                     }
                 }

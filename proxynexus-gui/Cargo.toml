@@ -46,6 +46,7 @@ features = [
   "Document",
   "HtmlElement",
   "Url",
+  "UrlSearchParams",
   "Window",
   "Storage",
 ]
