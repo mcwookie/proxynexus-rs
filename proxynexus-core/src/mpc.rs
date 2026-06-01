@@ -45,7 +45,6 @@ pub async fn generate_mpc_zip(
     let mut zip = ZipWriter::new(&mut zip_buffer);
 
     let single_side = sides.len() == 1;
-    let mut image_cache: HashMap<String, (image::RgbImage, ImageFormat)> = HashMap::new();
 
     for (side_name, side_printings) in sides {
         let folder_name = if single_side {
@@ -60,7 +59,6 @@ pub async fn generate_mpc_zip(
             options,
             &mut zip,
             &folder_name,
-            &mut image_cache,
             &progress,
             &mut processed_images,
             total_images,
@@ -86,13 +84,21 @@ async fn process_side<W: Write + Seek>(
     options: MpcOptions,
     zip: &mut ZipWriter<W>,
     folder_name: &str,
-    image_cache: &mut HashMap<String, (image::RgbImage, ImageFormat)>,
     progress: &Option<Box<dyn Fn(f32) + Send + Sync>>,
     processed_images: &mut usize,
     total_images: usize,
 ) -> Result<()> {
     let mut copy_counters: HashMap<(String, String, Option<String>), u32> = HashMap::new();
     let mut uniqueness_counter: u32 = 0;
+
+    struct ImageRequest {
+        printing: Printing,
+        part_name: String,
+        image_key: String,
+        copy_num: u32,
+    }
+
+    let mut requests: Vec<ImageRequest> = Vec::new();
 
     for printing in printings {
         let key = (
@@ -105,89 +111,120 @@ async fn process_side<W: Write + Seek>(
             .and_modify(|n| *n += 1)
             .or_insert(1);
 
-        let image_keys_to_process =
-            std::iter::once(("front".to_string(), printing.image_key.clone()))
-                .chain(printing.parts.into_iter().map(|a| (a.name, a.image_key)));
+        let front_key = printing.image_key.clone();
+        let parts = printing.parts.clone();
 
-        for (part_name, current_image_key) in image_keys_to_process {
-            uniqueness_counter += 1;
-            let start = Instant::now();
+        requests.push(ImageRequest {
+            printing: printing.clone(),
+            part_name: "front".to_string(),
+            image_key: front_key,
+            copy_num: *copy_num,
+        });
 
-            if !image_cache.contains_key(&current_image_key) {
-                let mut image_data = image_provider.get_image_bytes(&current_image_key).await?;
-
-                if options.upscale {
-                    image_data = crate::upscale_image(&image_data).await?
-                }
-
-                let image_format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
-                let img = image::load_from_memory(&image_data)?;
-                let bleed_image = print_prep::add_bleed_border(&img);
-                image_cache.insert(current_image_key.clone(), (bleed_image, image_format));
-            } else {
-                info!("cache hit for {}", current_image_key);
-            }
-
-            let (bleed_image, image_format) = image_cache.get(&current_image_key).unwrap();
-            let mut final_image = bleed_image.clone();
-            print_prep::apply_uniqueness_marker(&mut final_image, uniqueness_counter);
-            let bordered_bytes = print_prep::encode_image(final_image, *image_format)?;
-
-            let ext = if *image_format == ImageFormat::Png {
-                "png"
-            } else {
-                "jpg"
-            };
-
-            let variant_label = printing.variant.as_deref().unwrap_or("official");
-
-            let filename = if part_name == "front" {
-                format!(
-                    "{}/{}-{}-{}-{}.{}",
-                    folder_name,
-                    printing.card_id,
-                    variant_label,
-                    printing.collection,
-                    copy_num,
-                    ext
-                )
-            } else {
-                format!(
-                    "{}/{}-{}-{}-{}-{}.{}",
-                    folder_name,
-                    printing.card_id,
-                    variant_label,
-                    printing.collection,
-                    copy_num,
-                    part_name,
-                    ext
-                )
-            };
-
-            let options =
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-
-            zip.start_file(&filename, options)?;
-            zip.write_all(&bordered_bytes)?;
-
-            *processed_images += 1;
-            if let Some(cb) = progress
-                && total_images > 0
-            {
-                cb(*processed_images as f32 / total_images as f32);
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            #[cfg(target_arch = "wasm32")]
-            gloo_timers::future::TimeoutFuture::new(0).await;
-
-            info!(
-                "Runtime for image {}: {:?}",
-                current_image_key,
-                start.elapsed()
-            );
+        for part in parts {
+            requests.push(ImageRequest {
+                printing: printing.clone(),
+                part_name: part.name,
+                image_key: part.image_key,
+                copy_num: *copy_num,
+            });
         }
+    }
+
+    requests.sort_by(|a, b| a.image_key.cmp(&b.image_key));
+
+    struct CachedImage {
+        key: String,
+        image: image::RgbImage,
+        format: ImageFormat,
+    }
+
+    let mut current_cache: Option<CachedImage> = None;
+
+    for req in requests {
+        let printing = req.printing;
+        let part_name = req.part_name;
+        let current_image_key = req.image_key;
+        let copy_num = req.copy_num;
+
+        uniqueness_counter += 1;
+        let start = Instant::now();
+
+        if current_cache
+            .as_ref()
+            .is_none_or(|c| c.key != current_image_key)
+        {
+            let mut image_data = image_provider.get_image_bytes(&current_image_key).await?;
+
+            if options.upscale {
+                image_data = crate::upscale_image(&image_data).await?
+            }
+
+            let image_format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
+            let img = image::load_from_memory(&image_data)?;
+            let bleed_image = print_prep::add_bleed_border(&img);
+
+            current_cache = Some(CachedImage {
+                key: current_image_key.clone(),
+                image: bleed_image,
+                format: image_format,
+            });
+        }
+
+        let cached = current_cache.as_ref().unwrap();
+        let mut final_image = cached.image.clone();
+        print_prep::apply_uniqueness_marker(&mut final_image, uniqueness_counter);
+        let bordered_bytes = print_prep::encode_image(final_image, cached.format)?;
+
+        let ext = if cached.format == ImageFormat::Png {
+            "png"
+        } else {
+            "jpg"
+        };
+
+        let variant_label = printing.variant.as_deref().unwrap_or("official");
+
+        let filename = if part_name == "front" {
+            format!(
+                "{}/{}-{}-{}-{}.{}",
+                folder_name, printing.card_id, variant_label, printing.collection, copy_num, ext
+            )
+        } else {
+            format!(
+                "{}/{}-{}-{}-{}-{}.{}",
+                folder_name,
+                printing.card_id,
+                variant_label,
+                printing.collection,
+                copy_num,
+                part_name,
+                ext
+            )
+        };
+
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        zip.start_file(&filename, options)?;
+        zip.write_all(&bordered_bytes)?;
+
+        *processed_images += 1;
+        if let Some(cb) = progress
+            && total_images > 0
+        {
+            cb(*processed_images as f32 / total_images as f32);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        #[cfg(target_arch = "wasm32")]
+        gloo_timers::future::TimeoutFuture::new(0).await;
+
+        info!(
+            "Runtime for image {}: {:?}",
+            current_image_key,
+            start.elapsed()
+        );
     }
 
     Ok(())
