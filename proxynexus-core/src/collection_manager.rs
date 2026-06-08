@@ -139,7 +139,7 @@ impl<'a> CollectionManager<'a> {
                 let entry = entry?;
                 let path = entry.path();
 
-                let (api_id, parsed_printing, part) = match Self::parse_filename(&path) {
+                let (api_id, parsed_printing, part, has_bleed) = match Self::parse_filename(&path) {
                     Some(parsed) => parsed,
                     None => continue,
                 };
@@ -157,14 +157,15 @@ impl<'a> CollectionManager<'a> {
                 let db_card_id = format!("{}_{}", manifest.game, api_id);
 
                 let insert_print_q = format!(
-                    "INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, part) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                    "INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, part, has_bleed) VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
                     next_print_id,
                     collection_id,
                     quote_sql_string(&db_card_id),
                     version_id_sql,
                     variant_sql,
                     quote_sql_string(&file_path),
-                    quote_sql_string(&part)
+                    quote_sql_string(&part),
+                    if has_bleed { "TRUE" } else { "FALSE" }
                 );
 
                 self.db.execute(&insert_print_q).await?;
@@ -196,8 +197,15 @@ impl<'a> CollectionManager<'a> {
         Ok(())
     }
 
-    fn parse_filename(path: &Path) -> Option<(String, String, String)> {
-        let stem = path.file_stem()?.to_str()?;
+    fn parse_filename(path: &Path) -> Option<(String, String, String, bool)> {
+        let mut stem = path.file_stem()?.to_str()?;
+
+        let has_bleed = if let Some(stripped) = stem.strip_suffix(".bleed") {
+            stem = stripped;
+            true
+        } else {
+            false
+        };
 
         let (card_id, rest) = stem.split_once('@')?;
 
@@ -214,7 +222,7 @@ impl<'a> CollectionManager<'a> {
             (rest.to_string(), "front".to_string())
         };
 
-        Some((card_id.to_string(), printing, part))
+        Some((card_id.to_string(), printing, part, has_bleed))
     }
 
     pub async fn get_collections(&mut self) -> Result<Vec<(String, String, String)>> {
@@ -336,7 +344,8 @@ mod tests {
             Some((
                 "hedge_fund".to_string(),
                 "system_gateway".to_string(),
-                "front".to_string()
+                "front".to_string(),
+                false
             ))
         );
 
@@ -345,7 +354,8 @@ mod tests {
             Some((
                 "a-legion-of-one".to_string(),
                 "emerald-core-set".to_string(),
-                "front".to_string()
+                "front".to_string(),
+                false
             ))
         );
 
@@ -356,7 +366,30 @@ mod tests {
             Some((
                 "sync_everything_everywhere".to_string(),
                 "data_and_destiny".to_string(),
-                "back".to_string()
+                "back".to_string(),
+                false
+            ))
+        );
+
+        assert_eq!(
+            CollectionManager::parse_filename(Path::new(
+                "hedge_fund@system_gateway~front.bleed.jpg"
+            )),
+            Some((
+                "hedge_fund".to_string(),
+                "system_gateway".to_string(),
+                "front".to_string(),
+                true
+            ))
+        );
+
+        assert_eq!(
+            CollectionManager::parse_filename(Path::new("hedge_fund@system_gateway.bleed.png")),
+            Some((
+                "hedge_fund".to_string(),
+                "system_gateway".to_string(),
+                "front".to_string(),
+                true
             ))
         );
 

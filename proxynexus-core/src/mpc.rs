@@ -96,6 +96,7 @@ async fn process_side<W: Write + Seek>(
         part_name: String,
         image_key: String,
         copy_num: u32,
+        has_bleed: bool,
     }
 
     let mut requests: Vec<ImageRequest> = Vec::new();
@@ -112,6 +113,7 @@ async fn process_side<W: Write + Seek>(
             .or_insert(1);
 
         let front_key = printing.image_key.clone();
+        let front_has_bleed = printing.has_bleed;
         let parts = printing.parts.clone();
 
         requests.push(ImageRequest {
@@ -119,6 +121,7 @@ async fn process_side<W: Write + Seek>(
             part_name: "front".to_string(),
             image_key: front_key,
             copy_num: *copy_num,
+            has_bleed: front_has_bleed,
         });
 
         for part in parts {
@@ -127,6 +130,7 @@ async fn process_side<W: Write + Seek>(
                 part_name: part.name,
                 image_key: part.image_key,
                 copy_num: *copy_num,
+                has_bleed: part.has_bleed,
             });
         }
     }
@@ -162,7 +166,11 @@ async fn process_side<W: Write + Seek>(
 
             let image_format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
             let img = image::load_from_memory(&image_data)?;
-            let bleed_image = print_prep::add_bleed_border(&img);
+            let bleed_image = if req.has_bleed {
+                img.to_rgb8()
+            } else {
+                print_prep::add_bleed_border(&img)
+            };
 
             current_cache = Some(CachedImage {
                 key: current_image_key.clone(),

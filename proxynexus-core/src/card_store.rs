@@ -55,6 +55,7 @@ struct AvailablePrintingRow {
     name: String,
     side: String,
     pack_id: Option<String>,
+    has_bleed: bool,
     date_release: Option<String>,
 }
 
@@ -493,16 +494,17 @@ impl<'a> CardStore<'a> {
         let in_clause = build_in_clause(&unique_titles);
 
         let query = format!(
-            "SELECT 
-                c.title, 
+            "SELECT
+                c.title,
                 c.api_id as id,
                 (p.version_id IS NOT NULL) AS is_official,
-                p.variant, 
-                p.file_path, 
-                p.part, 
+                p.variant,
+                p.file_path,
+                p.part,
                 col.name,
-                c.side, 
+                c.side,
                 pks.api_id as pack_id,
+                p.has_bleed,
                 pks.date_release
              FROM printings p
              JOIN cards c ON p.card_id = c.id
@@ -561,6 +563,7 @@ impl<'a> CardStore<'a> {
 
         for (key, rows) in groups {
             let mut image_key = String::new();
+            let mut has_bleed = false;
             let mut parts = Vec::new();
 
             let first_row = &rows[0];
@@ -572,10 +575,12 @@ impl<'a> CardStore<'a> {
             for row in rows {
                 if row.part == "front" {
                     image_key = row.file_path;
+                    has_bleed = row.has_bleed;
                 } else {
                     parts.push(PrintingPart {
                         name: row.part,
                         image_key: row.file_path,
+                        has_bleed: row.has_bleed,
                     });
                 }
             }
@@ -586,6 +591,7 @@ impl<'a> CardStore<'a> {
                 is_official,
                 variant: key.variant,
                 image_key,
+                has_bleed,
                 parts,
                 collection: key.collection_name,
                 side,
@@ -683,6 +689,7 @@ mod tests {
             is_official,
             variant: variant.map(|s| s.to_string()),
             image_key: format!("{}.jpg", code),
+            has_bleed: false,
             parts: Vec::new(),
             collection: coll.into(),
             side: "runner".into(),
@@ -923,6 +930,7 @@ mod tests {
             side: "test".into(),
             pack_id: Some("core".into()),
             date_release: Some("2017-10-05".into()),
+            has_bleed: false,
         };
         let row2 = AvailablePrintingRow {
             title: "Fine Katana".into(),
@@ -935,6 +943,7 @@ mod tests {
             side: "test".into(),
             pack_id: Some("emerald-core-set".into()),
             date_release: Some("2021-10-21".into()),
+            has_bleed: false,
         };
 
         let result = CardStore::assemble_printings(vec![row1, row2]);

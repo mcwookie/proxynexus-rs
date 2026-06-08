@@ -14,6 +14,7 @@ pub struct Manifest {
 pub struct PrintingPart {
     pub name: String,
     pub image_key: String,
+    pub has_bleed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,6 +24,7 @@ pub struct Printing {
     pub is_official: bool,
     pub variant: Option<String>,
     pub image_key: String,
+    pub has_bleed: bool,
     pub parts: Vec<PrintingPart>,
     pub collection: String,
     pub side: String,

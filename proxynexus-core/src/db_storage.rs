@@ -61,6 +61,7 @@ struct PrintingDbRow {
     variant: Option<String>,
     file_path: String,
     part: String,
+    has_bleed: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -184,7 +185,8 @@ impl DbStorage {
                 version_id TEXT,
                 variant TEXT,
                 file_path TEXT NOT NULL,
-                part TEXT NOT NULL
+                part TEXT NOT NULL,
+                has_bleed BOOLEAN DEFAULT FALSE
             );
             ",
         )
@@ -341,7 +343,7 @@ impl DbStorage {
         if let Some(payload) = print_payloads.into_iter().next() {
             let rows: Vec<PrintingDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
-                sql.push_str("INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, part) VALUES ");
+                sql.push_str("INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, part, has_bleed) VALUES ");
                 let values: Vec<String> = chunk
                     .iter()
                     .map(|row| {
@@ -354,14 +356,15 @@ impl DbStorage {
                             .as_ref()
                             .map_or("NULL".to_string(), |v| quote_sql_string(v));
                         format!(
-                            "({}, {}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {}, {}, {})",
                             row.id,
                             row.collection_id,
                             quote_sql_string(&row.card_id),
                             version_id,
                             variant,
                             quote_sql_string(&row.file_path),
-                            quote_sql_string(&row.part)
+                            quote_sql_string(&row.part),
+                            if row.has_bleed { "TRUE" } else { "FALSE" }
                         )
                     })
                     .collect();
