@@ -130,9 +130,10 @@ The `proxynexus-cli` supports the following subcommands. You can use `--help` on
 
 Each image file represents a single printing and part. The collection builder relies solely on the file name to identify it.
 The general syntax is:
-`{card_id}@{printing}[~{part}].{extension}`
+`{card_id}@{printing}[~{part}][.bleed].{extension}`
 
 The Card ID and Printing sections are required. The part section is optional and defaults to "front" if omitted.
+The optional `.bleed` suffix indicates the image already has a bleed border.
 `printing` must be `pack_id` for official cards and can be any free-form label for unofficial art-art/custom 
 Only PNG and JPEG files are supported.
 
@@ -141,6 +142,8 @@ Only PNG and JPEG files are supported.
 *   **Alternate Art:** The printing must be an official pack or a custom label for alt-arts. (e.g., `hedge_fund@alt1.jpg` -> ID: hedge_fund, Printing: alt1, Part: front).
 *   **Parts (Multiple Sides):** Contains a tilde `~` followed by the part name. 
 (e.g., `sync_everything_everywhere@data_and_destiny~back` -> ID: sync_everything_everywhere, Printing: data_and_destiny, Part: back).
+*   **Bleed Images:** Contains a `.bleed` suffix before the extension. This indicates the image already has a bleed border and shouldn't be processed to add one during MPC generation.
+(e.g., `hedge_fund@system_gateway~front.bleed.jpg` -> ID: hedge_fund, Printing: system_gateway, Part: front, Has Bleed: true).
 
 **Strict Rules:**
 *   **Orphans:** If a part file doesn't have an associated front file, it is ignored.
@@ -305,7 +308,7 @@ Images that are already large enough remain unchanged.
 *   **Dynamic Bleed Generation:** Rather than adding a strict 36px bleed all around, the bleed is dynamically sized. 
 It iteratively copies the outer edge pixels and rapidly blits them outward to create a seamless bleed natively in Rust. 
 This ensures at least a 36px bleed while padding the shorter sides to guarantee the final image hits the minimum 
-MPC size of 816x1110.
+MPC size of 816x1110. *(Note: Images denoted with the `.bleed` suffix in their filename will bypass this generation entirely).*
 
 I benchmarked this function against a version that used the Rust bindings of OpenCV's copyMakeBorder, and while mine is 
 slower, it's quite good enough for keeping the project as purely Rust as possible.
