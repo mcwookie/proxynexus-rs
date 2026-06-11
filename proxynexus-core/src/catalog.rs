@@ -1,5 +1,6 @@
 use crate::db_storage::{DbStorage, quote_sql_string};
 use crate::error::Result;
+use crate::games::agot::adapter::AgotAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use async_trait::async_trait;
@@ -59,6 +60,7 @@ impl<'a> CatalogManager<'a> {
         let adapters: Vec<Box<dyn CatalogProvider>> = vec![
             Box::new(NetrunnerAdapter::new()),
             Box::new(L5rAdapter::new()),
+            Box::new(AgotAdapter::new()),
         ];
 
         Self { db, adapters }
