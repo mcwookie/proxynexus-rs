@@ -79,6 +79,28 @@ impl<'a> CollectionManager<'a> {
             collection_name, manifest.version, manifest.language
         );
 
+        let game_check_q = format!(
+            "SELECT COUNT(*) as count FROM packs WHERE game_id = {}",
+            quote_sql_string(&manifest.game)
+        );
+        let game_check_payload = self.db.execute(&game_check_q).await?;
+        let pack_count = match game_check_payload.into_iter().next() {
+            Some(p) => p
+                .rows_as::<CountRow>()?
+                .into_iter()
+                .next()
+                .map(|r| r.count)
+                .unwrap_or(0),
+            None => 0,
+        };
+
+        if pack_count == 0 {
+            return Err(ProxyNexusError::Internal(format!(
+                "No catalog found for game '{}'. Please run 'catalog update' first.",
+                manifest.game
+            )));
+        }
+
         if self.collection_exists(&collection_name).await? {
             return Err(ProxyNexusError::Internal(format!(
                 "Collection '{}' has already been added.",
