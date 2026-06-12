@@ -242,6 +242,29 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
         }
     };
 
+    let check_cursor = move || {
+        if !is_suggestions_visible() {
+            return;
+        }
+        let text = list_text.read().clone();
+        let mut is_suggestions_visible = is_suggestions_visible;
+        let cursor_line_idx = cursor_line_idx;
+        spawn(async move {
+            let mut eval = eval(
+                "
+                let el = document.getElementById('card-list-input');
+                dioxus.send(el ? el.selectionStart : 0);
+                ",
+            );
+            if let Ok(val) = eval.recv::<usize>().await {
+                let line_idx = text.chars().take(val).filter(|&c| c == '\n').count();
+                if line_idx != *cursor_line_idx.read() {
+                    is_suggestions_visible.set(false);
+                }
+            }
+        });
+    };
+
     rsx! {
         div {
             class: "relative flex-1 w-full flex flex-col",
@@ -253,6 +276,9 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
                 disabled: props.disabled,
                 oninput: handle_input,
                 onkeydown: handle_keydown,
+                onblur: move |_| is_suggestions_visible.set(false),
+                onclick: move |_| check_cursor(),
+                onkeyup: move |_| check_cursor(),
             }
 
             if is_suggestions_visible() {
@@ -267,6 +293,7 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
                             } else {
                                 "px-4 py-2 cursor-pointer hover:bg-gray-100 text-base md:text-sm font-mono"
                             },
+                            onmousedown: move |evt| evt.prevent_default(),
                             onclick: {
                                 let sug = suggestion.clone();
                                 move |_| apply_suggestion(sug.clone(), false)
