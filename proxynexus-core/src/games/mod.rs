@@ -1,6 +1,6 @@
+pub mod agot;
 pub mod l5r;
 pub mod netrunner;
-pub mod agot;
 use crate::card_source::DecklistProvider;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;

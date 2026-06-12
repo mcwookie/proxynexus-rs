@@ -201,7 +201,7 @@ mod tests {
             is_official,
             variant: variant.map(|v| v.to_string()),
             image_key: format!("{}.jpg", code),
-            has_bleed: false,
+            bleed_image_key: None,
             parts: Vec::new(),
             collection: coll.into(),
             side: "runner".into(),

@@ -112,8 +112,7 @@ async fn process_side<W: Write + Seek>(
             .and_modify(|n| *n += 1)
             .or_insert(1);
 
-        let front_key = printing.image_key.clone();
-        let front_has_bleed = printing.has_bleed;
+        let (front_key, front_has_bleed) = printing.mpc_image();
         let parts = printing.parts.clone();
 
         requests.push(ImageRequest {
@@ -125,12 +124,13 @@ async fn process_side<W: Write + Seek>(
         });
 
         for part in parts {
+            let (part_key, part_has_bleed) = part.mpc_image();
             requests.push(ImageRequest {
                 printing: printing.clone(),
                 part_name: part.name,
-                image_key: part.image_key,
+                image_key: part_key,
                 copy_num: *copy_num,
-                has_bleed: part.has_bleed,
+                has_bleed: part_has_bleed,
             });
         }
     }

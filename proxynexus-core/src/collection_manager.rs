@@ -151,20 +151,61 @@ impl<'a> CollectionManager<'a> {
 
         let src_images = temp_path.join("images");
 
+        let mut parsed_files = Vec::new();
+        for entry in fs::read_dir(&src_images)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(parsed) = Self::parse_filename(&path) {
+                parsed_files.push((path, parsed));
+            }
+        }
+
+        let mut parts_map: HashMap<(String, String, String), (bool, bool)> = HashMap::new();
+        let mut has_front: HashMap<(String, String), bool> = HashMap::new();
+
+        for (_, (api_id, printing, part, has_bleed)) in &parsed_files {
+            let key = (api_id.clone(), printing.clone(), part.clone());
+            let entry = parts_map.entry(key).or_insert((false, false));
+            if *has_bleed {
+                entry.1 = true;
+            } else {
+                entry.0 = true;
+            }
+
+            if part == "front" {
+                has_front.insert((api_id.clone(), printing.clone()), true);
+            } else {
+                has_front
+                    .entry((api_id.clone(), printing.clone()))
+                    .or_insert(false);
+            }
+        }
+
+        for ((api_id, printing, part), (has_non_bleed, has_bleed)) in parts_map {
+            if has_bleed && !has_non_bleed {
+                return Err(ProxyNexusError::Internal(format!(
+                    "Validation error: Found bleed image for card '{}' ({}) part '{}', but no standard non-bleed image.",
+                    api_id, printing, part
+                )));
+            }
+        }
+
+        for ((api_id, printing), front_exists) in has_front {
+            if !front_exists {
+                return Err(ProxyNexusError::Internal(format!(
+                    "Validation error: Card '{}' ({}) has auxiliary parts but no 'front' image.",
+                    api_id, printing
+                )));
+            }
+        }
+
         self.db.execute("BEGIN").await?;
 
         let mut next_print_id = self.db.get_next_id("printings").await?;
 
         let tx_result: Result<i32> = async {
             let mut printings_added = 0;
-            for entry in fs::read_dir(&src_images)? {
-                let entry = entry?;
-                let path = entry.path();
-
-                let (api_id, parsed_printing, part, has_bleed) = match Self::parse_filename(&path) {
-                    Some(parsed) => parsed,
-                    None => continue,
-                };
+            for (path, (api_id, parsed_printing, part, has_bleed)) in parsed_files {
 
                 let file_name = path.file_name().unwrap().to_string_lossy();
                 let file_path = format!("{}/{}/{}", manifest.game, collection_name, file_name);
@@ -194,7 +235,7 @@ impl<'a> CollectionManager<'a> {
                 next_print_id += 1;
 
                 let dst_path = collection_dir.join(path.file_name().unwrap());
-                fs::copy(entry.path(), dst_path)?;
+                fs::copy(&path, dst_path)?;
 
                 printings_added += 1;
             }

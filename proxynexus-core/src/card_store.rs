@@ -563,8 +563,8 @@ impl<'a> CardStore<'a> {
 
         for (key, rows) in groups {
             let mut image_key = String::new();
-            let mut has_bleed = false;
-            let mut parts = Vec::new();
+            let mut bleed_image_key = None;
+            let mut parts_map: HashMap<String, PrintingPart> = HashMap::new();
 
             let first_row = &rows[0];
             let card_title = first_row.title.clone();
@@ -574,16 +574,28 @@ impl<'a> CardStore<'a> {
 
             for row in rows {
                 if row.part == "front" {
-                    image_key = row.file_path;
-                    has_bleed = row.has_bleed;
+                    if row.has_bleed {
+                        bleed_image_key = Some(row.file_path);
+                    } else {
+                        image_key = row.file_path;
+                    }
                 } else {
-                    parts.push(PrintingPart {
-                        name: row.part,
-                        image_key: row.file_path,
-                        has_bleed: row.has_bleed,
-                    });
+                    let part = parts_map
+                        .entry(row.part.clone())
+                        .or_insert_with(|| PrintingPart {
+                            name: row.part.clone(),
+                            image_key: String::new(),
+                            bleed_image_key: None,
+                        });
+                    if row.has_bleed {
+                        part.bleed_image_key = Some(row.file_path);
+                    } else {
+                        part.image_key = row.file_path;
+                    }
                 }
             }
+
+            let parts = parts_map.into_values().collect();
 
             let printing = Printing {
                 card_title,
@@ -591,7 +603,7 @@ impl<'a> CardStore<'a> {
                 is_official,
                 variant: key.variant,
                 image_key,
-                has_bleed,
+                bleed_image_key,
                 parts,
                 collection: key.collection_name,
                 side,
@@ -689,7 +701,7 @@ mod tests {
             is_official,
             variant: variant.map(|s| s.to_string()),
             image_key: format!("{}.jpg", code),
-            has_bleed: false,
+            bleed_image_key: None,
             parts: Vec::new(),
             collection: coll.into(),
             side: "runner".into(),

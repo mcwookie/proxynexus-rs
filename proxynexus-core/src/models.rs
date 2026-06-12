@@ -14,7 +14,7 @@ pub struct Manifest {
 pub struct PrintingPart {
     pub name: String,
     pub image_key: String,
-    pub has_bleed: bool,
+    pub bleed_image_key: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,12 +24,30 @@ pub struct Printing {
     pub is_official: bool,
     pub variant: Option<String>,
     pub image_key: String,
-    pub has_bleed: bool,
+    pub bleed_image_key: Option<String>,
     pub parts: Vec<PrintingPart>,
     pub collection: String,
     pub side: String,
     pub pack_id: Option<String>,
     pub date_release: Option<String>,
+}
+
+impl PrintingPart {
+    pub fn mpc_image(&self) -> (String, bool) {
+        self.bleed_image_key
+            .clone()
+            .map(|k| (k, true))
+            .unwrap_or_else(|| (self.image_key.clone(), false))
+    }
+}
+
+impl Printing {
+    pub fn mpc_image(&self) -> (String, bool) {
+        self.bleed_image_key
+            .clone()
+            .map(|k| (k, true))
+            .unwrap_or_else(|| (self.image_key.clone(), false))
+    }
 }
 
 #[derive(Debug, Clone)]

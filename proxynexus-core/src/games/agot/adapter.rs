@@ -41,7 +41,7 @@ impl CatalogProvider for AgotAdapter {
             })
             .collect();
 
-        // In AGOT, different cards can have the same name. 
+        // In AGOT, different cards can have the same name.
         // ThronesDB uses the 'label' field to distinguish them.
         // We use normalized label as the Card ID to keep functional versions distinct.
         let mut cards_map = std::collections::HashMap::new();
@@ -49,7 +49,7 @@ impl CatalogProvider for AgotAdapter {
 
         for c in api_cards {
             let normalized_id = normalize_title(&c.label);
-            
+
             // Side mapping for MPC grouping
             let side = match c.type_code.as_str() {
                 "plot" => "plot",
@@ -59,12 +59,15 @@ impl CatalogProvider for AgotAdapter {
             };
 
             if !cards_map.contains_key(&normalized_id) {
-                cards_map.insert(normalized_id.clone(), Card {
-                    id: normalized_id.clone(),
-                    title: c.label.clone(), // Use label as title for clarity
-                    title_normalized: normalized_id.clone(),
-                    side: Some(side.to_string()),
-                });
+                cards_map.insert(
+                    normalized_id.clone(),
+                    Card {
+                        id: normalized_id.clone(),
+                        title: c.label.clone(), // Use label as title for clarity
+                        title_normalized: normalized_id.clone(),
+                        side: Some(side.to_string()),
+                    },
+                );
             }
 
             versions.push(CardVersion {
