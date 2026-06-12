@@ -117,10 +117,11 @@ impl<'a> CardStore<'a> {
 
     pub async fn get_all_card_names(&mut self) -> Result<Vec<String>> {
         let query = format!(
-            "SELECT DISTINCT title
-            FROM cards
-            WHERE game_id = {}
-            ORDER BY title",
+            "SELECT DISTINCT c.title
+            FROM cards c
+            INNER JOIN printings p ON c.id = p.card_id
+            WHERE c.game_id = {}
+            ORDER BY c.title",
             quote_sql_string(&self.active_game_id)
         );
         let payloads = self.db.execute(&query).await?;
