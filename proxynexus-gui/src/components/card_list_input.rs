@@ -11,6 +11,8 @@ pub struct CardListInputProps {
     pub oninput: EventHandler<String>,
     #[props(default = false)]
     pub disabled: bool,
+    #[props(default = None)]
+    pub active_card_name: Option<Signal<Option<String>>>,
 }
 
 #[component]
@@ -86,7 +88,12 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
                 Ok((n, _, _)) => clean_card_name(n),
                 Err(_) => clean_card_name(rest),
             }
-            .trim();
+            .trim()
+            .to_string();
+
+            if let Some(mut sig) = props.active_card_name {
+                sig.set(Some(name.clone()));
+            }
 
             if name.len() < 3 {
                 is_suggestions_visible.set(false);
@@ -94,12 +101,12 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
             }
 
             let matcher = SkimMatcherV2::default();
-            let normalized_name = normalize_title(name);
+            let normalized_name = normalize_title(&name);
 
             let mut matches: Vec<(i64, String)> = all_cards
                 .iter()
                 .filter_map(|card| {
-                    let score_original = matcher.fuzzy_match(card, name).unwrap_or(0);
+                    let score_original = matcher.fuzzy_match(card, &name).unwrap_or(0);
                     let score_normalized = matcher
                         .fuzzy_match(&normalize_title(card), &normalized_name)
                         .unwrap_or(0);
@@ -243,12 +250,11 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
     };
 
     let check_cursor = move || {
-        if !is_suggestions_visible() {
-            return;
-        }
         let text = list_text.read().clone();
         let mut is_suggestions_visible = is_suggestions_visible;
-        let cursor_line_idx = cursor_line_idx;
+        let mut cursor_line_idx = cursor_line_idx;
+        let active_card_name = props.active_card_name;
+
         spawn(async move {
             let mut eval = eval(
                 "
@@ -260,6 +266,21 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
                 let line_idx = text.chars().take(val).filter(|&c| c == '\n').count();
                 if line_idx != *cursor_line_idx.read() {
                     is_suggestions_visible.set(false);
+                    cursor_line_idx.set(line_idx);
+                }
+
+                let lines: Vec<&str> = text.split('\n').collect();
+                if let Some(line) = lines.get(line_idx) {
+                    let (_qty, rest) = CardStore::parse_quantity(line);
+                    let name = match CardStore::parse_overrides(rest) {
+                        Ok((n, _, _)) => clean_card_name(n),
+                        Err(_) => clean_card_name(rest),
+                    }
+                    .trim()
+                    .to_string();
+                    if let Some(mut sig) = active_card_name {
+                        sig.set(Some(name));
+                    }
                 }
             }
         });
@@ -272,11 +293,16 @@ pub fn CardListInput(props: CardListInputProps) -> Element {
                 id: "card-list-input",
                 class: "flex-1 w-full p-3 border border-gray-300 rounded-md shadow-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none font-mono text-base md:text-sm disabled:bg-gray-100 disabled:text-gray-500 cursor-auto disabled:cursor-not-allowed",
                 placeholder: "Enter your card list here...",
-                value: "{props.list_text}",
+                initial_value: "{props.list_text}",
                 disabled: props.disabled,
                 oninput: handle_input,
                 onkeydown: handle_keydown,
-                onblur: move |_| is_suggestions_visible.set(false),
+                onblur: move |_| {
+                    is_suggestions_visible.set(false);
+                    if let Some(mut sig) = props.active_card_name {
+                        sig.set(None);
+                    }
+                },
                 onclick: move |_| check_cursor(),
                 onkeyup: move |_| check_cursor(),
             }

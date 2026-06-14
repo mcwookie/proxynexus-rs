@@ -382,7 +382,7 @@ async fn get_printings_from_source(
     let mut store = proxynexus_core::card_store::CardStore::new(db, game.to_string())
         .context("Failed to initialize card store")?;
 
-    let card_requests = match source {
+    let card_requests_res = match source {
         InputSource::Cardlist(list) => Cardlist(list)
             .to_card_requests(&mut store)
             .await
@@ -396,6 +396,16 @@ async fn get_printings_from_source(
             .await
             .with_context(|| format!("Failed to fetch deck from URL: {}", url))?,
     };
+
+    let card_requests = card_requests_res.requests;
+    let not_found = card_requests_res.not_found;
+
+    if !not_found.is_empty() {
+        tracing::warn!("{} card(s) were not found.", not_found.len());
+        for missing in not_found {
+            tracing::warn!("  - {}", missing);
+        }
+    }
 
     let available = store
         .get_available_printings(&card_requests)

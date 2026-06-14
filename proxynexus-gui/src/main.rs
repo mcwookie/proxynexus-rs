@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use proxynexus_core::card_source::{Cardlist, DecklistUrl, SetName};
 use proxynexus_core::card_store::normalize_title;
 use proxynexus_core::db_storage::DbStorage;
-use proxynexus_core::models::Printing;
+use proxynexus_core::models::{Printing, ResolvedPrintings};
 use proxynexus_core::query::{apply_variant_overrides, resolve_query_printings};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -370,6 +370,8 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         }
         ActiveSource::default()
     });
+    let active_card_name = use_signal(|| None::<String>);
+    let mut debounced_active_card_name = use_signal(|| None::<String>);
     let mut debounced_source = use_signal(ActiveSource::default);
     let mut debounce_task = use_signal(|| None::<dioxus_core::Task>);
 
@@ -384,6 +386,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
 
     use_effect(move || {
         let current_source = active_source();
+        let current_active_card = active_card_name();
 
         if let Some(task) = debounce_task.take() {
             task.cancel();
@@ -394,10 +397,12 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 debounce_task.set(Some(spawn(async move {
                     sleep(300).await;
                     debounced_source.set(current_source);
+                    debounced_active_card_name.set(current_active_card);
                 })));
             }
             _ => {
                 debounced_source.set(current_source);
+                debounced_active_card_name.set(current_active_card);
             }
         }
     });
@@ -405,7 +410,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let raw_data_resource = use_resource(move || async move {
         let game_id = match active_game_id() {
             Some(id) => id,
-            None => return Ok((Vec::new(), HashMap::new())),
+            None => return Ok(ResolvedPrintings::default()),
         };
 
         let source = debounced_source();
@@ -415,7 +420,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         let res = match source {
             ActiveSource::Cardlist(text) => {
                 if text.trim().is_empty() {
-                    return Ok((Vec::new(), HashMap::new()));
+                    return Ok(ResolvedPrintings::default());
                 }
                 resolve_query_printings(&Cardlist(text), &mut db, &game_id)
                     .await
@@ -423,7 +428,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
             }
             ActiveSource::SetName(name) => {
                 if name.trim().is_empty() {
-                    return Ok((Vec::new(), HashMap::new()));
+                    return Ok(ResolvedPrintings::default());
                 }
                 resolve_query_printings(&SetName(name), &mut db, &game_id)
                     .await
@@ -431,7 +436,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
             }
             ActiveSource::DecklistUrl(url) => {
                 if url.trim().is_empty() {
-                    return Ok((Vec::new(), HashMap::new()));
+                    return Ok(ResolvedPrintings::default());
                 }
                 resolve_query_printings(&DecklistUrl(url), &mut db, &game_id)
                     .await
@@ -453,14 +458,19 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         let res_val = res.as_ref()?;
 
         match res_val {
-            Ok((base, available)) => {
+            Ok(result) => {
                 let applied = apply_variant_overrides(
-                    base,
-                    available,
+                    &result.printings,
+                    &result.available_variants,
                     &global_overrides.read(),
                     &index_overrides.read(),
                 );
-                Some(Ok((base.clone(), applied, available.clone())))
+                Some(Ok((
+                    result.printings.clone(),
+                    applied,
+                    result.available_variants.clone(),
+                    result.not_found.clone(),
+                )))
             }
             Err(e) => Some(Err(format!("{:?}", e))),
         }
@@ -468,7 +478,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
 
     let printings_by_title = use_memo(move || {
         let res = ordered_printings.read();
-        let (_base, printings, available) = res.as_ref()?.as_ref().ok()?;
+        let (_base, printings, available, _not_found) = res.as_ref()?.as_ref().ok()?;
 
         let mut grouped = HashMap::<String, Vec<Printing>>::new();
         for p in printings {
@@ -536,7 +546,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     };
 
     let is_generate_disabled = match ordered_printings.read().as_ref() {
-        Some(Ok((_, applied, _))) => applied.is_empty(),
+        Some(Ok((_, applied, _, _))) => applied.is_empty(),
         _ => true,
     };
 
@@ -551,11 +561,31 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 style: "z-index: 20;",
                 if let Some(result) = ordered_printings.read().as_ref() {
                     match result {
-                        Ok((_, printings, _)) if printings.is_empty() => rsx! {
+                        Ok((_, printings, _, not_found)) if printings.is_empty() && not_found.is_empty() => rsx! {
                             div { class: "text-gray-500", "Preview of selected cards..." }
                         },
-                        Ok((base_printings, printings, available)) => {
+                        Ok((base_printings, printings, available, not_found)) => {
+                            let display_not_found: Vec<_> = not_found.iter().filter(|&n| {
+                                if let Some(active) = debounced_active_card_name() {
+                                    n != &active
+                                } else {
+                                    true
+                                }
+                            }).collect();
+
                             rsx! {
+                                if !display_not_found.is_empty() {
+                                    div {
+                                        class: "bg-yellow-50 text-yellow-800 p-4 rounded-md mb-4 font-semibold shadow-sm border border-yellow-200",
+                                        "The following card(s) were not found:"
+                                        ul {
+                                            class: "list-disc list-inside mt-2 font-normal text-yellow-900 font-mono text-sm",
+                                            for missing in display_not_found {
+                                                li { "{missing}" }
+                                            }
+                                        }
+                                    }
+                                }
                                 PreviewGrid {
                                     base_printings: base_printings.clone(),
                                     printings: printings.clone(),
@@ -601,13 +631,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                     }
                     div {
                         class: "flex items-center gap-3",
-                        if let Some(Ok((_, resolved_printing, _))) = ordered_printings.read().as_ref() {
+                        if let Some(Ok((_, resolved_printing, _, _))) = ordered_printings.read().as_ref() {
                             if !resolved_printing.is_empty() {
                                 button {
                                     class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0 transition-colors group",
                                     onclick: move |_| {
                                         if let Some(game_id) = active_game_id() {
-                                            let printings_clone = if let Some(Ok((_, resolved_printing, _))) = ordered_printings.read().as_ref() {
+                                            let printings_clone = if let Some(Ok((_, resolved_printing, _, _))) = ordered_printings.read().as_ref() {
                                                 resolved_printing.clone()
                                             } else {
                                                 Vec::new()
@@ -655,6 +685,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                     active_game_id,
                     source_state: active_source,
                     db_signal,
+                    active_card_name,
                     on_source_changed: move |_| {
                         is_overrides_reset_pending.set(true);
                     }

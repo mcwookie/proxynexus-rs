@@ -50,7 +50,7 @@ impl Printing {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CardRequest {
     pub title: String,
     pub id: String,
@@ -68,4 +68,17 @@ pub struct DecklistEntry {
 #[derive(Debug, Clone)]
 pub struct Decklist {
     pub cards: Vec<DecklistEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResolvedCardRequests {
+    pub requests: Vec<CardRequest>,
+    pub not_found: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResolvedPrintings {
+    pub printings: Vec<Printing>,
+    pub available_variants: std::collections::HashMap<String, Vec<Printing>>,
+    pub not_found: Vec<String>,
 }

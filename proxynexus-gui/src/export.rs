@@ -104,7 +104,7 @@ pub async fn run_export(
             proxynexus_core::card_store::CardStore::new(&mut db, active_game_id.clone())
                 .context("Failed to create store")?;
 
-        let reqs = match active_source {
+        let card_requests_res = match active_source {
             ActiveSource::Cardlist(text) => Cardlist(text)
                 .to_card_requests(&mut store)
                 .await
@@ -118,6 +118,8 @@ pub async fn run_export(
                 .await
                 .context("Failed to fetch deck from Decklist API")?,
         };
+
+        let reqs = card_requests_res.requests;
 
         let available = store
             .get_available_printings(&reqs)

@@ -2,7 +2,7 @@ use crate::card_source::CardSource;
 use crate::card_store::{CardStore, normalize_title};
 use crate::db_storage::DbStorage;
 use crate::error::Result;
-use crate::models::{CardRequest, Printing};
+use crate::models::{CardRequest, Printing, ResolvedPrintings};
 use std::collections::HashMap;
 
 pub async fn list_available_sets(db: &mut DbStorage, game: &str) -> Result<String> {
@@ -44,7 +44,8 @@ pub async fn generate_query_output(
     game: &str,
 ) -> Result<String> {
     let mut store = CardStore::new(db, game.to_string())?;
-    let card_requests = card_source.to_card_requests(&mut store).await?;
+    let card_requests_result = card_source.to_card_requests(&mut store).await?;
+    let card_requests = card_requests_result.requests;
 
     let available = store.get_available_printings(&card_requests).await?;
 
@@ -55,13 +56,19 @@ pub async fn resolve_query_printings(
     card_source: &impl CardSource,
     db: &mut DbStorage,
     game: &str,
-) -> Result<(Vec<Printing>, HashMap<String, Vec<Printing>>)> {
+) -> Result<ResolvedPrintings> {
     let mut store = CardStore::new(db, game.to_string())?;
-    let card_requests = card_source.to_card_requests(&mut store).await?;
+    let card_requests_result = card_source.to_card_requests(&mut store).await?;
+    let card_requests = card_requests_result.requests;
+    let not_found = card_requests_result.not_found;
 
-    let available = store.get_available_printings(&card_requests).await?;
-    let printings = store.resolve_printings(&card_requests, &available)?;
-    Ok((printings, available))
+    let available_variants = store.get_available_printings(&card_requests).await?;
+    let printings = store.resolve_printings(&card_requests, &available_variants)?;
+    Ok(ResolvedPrintings {
+        printings,
+        available_variants,
+        not_found,
+    })
 }
 
 pub fn apply_variant_overrides(

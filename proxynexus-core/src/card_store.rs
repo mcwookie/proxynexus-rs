@@ -1,7 +1,7 @@
 use crate::card_source::{CardSource, Cardlist, SetName};
 use crate::db_storage::{DbStorage, build_in_clause, quote_sql_string};
 use crate::error::{ProxyNexusError, Result};
-use crate::models::{CardRequest, Decklist, Printing, PrintingPart};
+use crate::models::{CardRequest, Decklist, Printing, PrintingPart, ResolvedCardRequests};
 use gluesql::FromGlueRow;
 use gluesql::core::row_conversion::SelectExt;
 use std::collections::{HashMap, HashSet};
@@ -81,25 +81,31 @@ pub fn clean_card_name(name: &str) -> &str {
 }
 
 impl CardSource for Cardlist {
-    async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<Vec<CardRequest>> {
-        let (requests, not_found) = store.parse_cardlist_into_card_requests(&self.0).await?;
+    async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<ResolvedCardRequests> {
+        let result = store.parse_cardlist_into_card_requests(&self.0).await?;
 
-        if !not_found.is_empty() {
+        if !result.not_found.is_empty() {
             warn!(
                 "{} card(s) not found in catalog: {:?}",
-                not_found.len(),
-                not_found
+                result.not_found.len(),
+                result.not_found
             );
             warn!("Consider running 'proxynexus catalog update'");
         }
 
-        Ok(requests)
+        Ok(result)
     }
 }
 
 impl CardSource for SetName {
-    async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<Vec<CardRequest>> {
-        store.get_card_requests_from_set_name(&self.0).await
+    async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<ResolvedCardRequests> {
+        store
+            .get_card_requests_from_set_name(&self.0)
+            .await
+            .map(|r| ResolvedCardRequests {
+                requests: r,
+                not_found: Vec::new(),
+            })
     }
 }
 
@@ -141,7 +147,7 @@ impl<'a> CardStore<'a> {
     async fn parse_cardlist_into_card_requests(
         &mut self,
         text: &str,
-    ) -> Result<(Vec<CardRequest>, Vec<String>)> {
+    ) -> Result<ResolvedCardRequests> {
         type CardlistEntry<'a> = (&'a str, u32, Option<String>, Option<String>);
         let mut entries: Vec<CardlistEntry> = Vec::new();
 
@@ -159,7 +165,7 @@ impl<'a> CardStore<'a> {
         }
 
         if entries.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
+            return Ok(ResolvedCardRequests::default());
         }
 
         let titles: Vec<&str> = entries.iter().map(|(name, ..)| *name).collect();
@@ -183,7 +189,10 @@ impl<'a> CardStore<'a> {
             }
         }
 
-        Ok((requests, not_found))
+        Ok(ResolvedCardRequests {
+            requests,
+            not_found,
+        })
     }
 
     pub fn parse_quantity(line: &str) -> (u32, &str) {
@@ -242,6 +251,10 @@ impl<'a> CardStore<'a> {
         &mut self,
         names: &[&str],
     ) -> Result<(HashMap<String, (String, String, String)>, Vec<String>)> {
+        if names.is_empty() {
+            return Ok((HashMap::new(), Vec::new()));
+        }
+
         let normalized_name_map: HashMap<&str, String> = names
             .iter()
             .map(|&name| (name, normalize_title(name)))
@@ -281,12 +294,6 @@ impl<'a> CardStore<'a> {
                     row.pack_id,
                 ));
             }
-        }
-
-        if resolved_map.is_empty() && !names.is_empty() {
-            return Err(ProxyNexusError::Internal(
-                "No card titles found in the local catalog. Is your catalog seeded?".into(),
-            ));
         }
 
         let mut title_to_card: HashMap<String, (String, String, String)> = HashMap::new();
@@ -427,9 +434,9 @@ impl<'a> CardStore<'a> {
     pub async fn resolve_decklist_to_requests(
         &mut self,
         decklist: &Decklist,
-    ) -> Result<Vec<CardRequest>> {
+    ) -> Result<ResolvedCardRequests> {
         if decklist.cards.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ResolvedCardRequests::default());
         }
 
         let card_ids: HashSet<&String> = decklist.cards.iter().map(|e| &e.card_id).collect();
@@ -454,13 +461,8 @@ impl<'a> CardStore<'a> {
             }
         }
 
-        if resolved_titles.is_empty() && !decklist.cards.is_empty() {
-            return Err(ProxyNexusError::Internal(
-                "No card IDs found in the local catalog.".into(),
-            ));
-        }
-
         let mut requests = Vec::new();
+        let mut not_found = Vec::new();
         for entry in &decklist.cards {
             if let Some(title) = resolved_titles.get(&entry.card_id) {
                 requests.extend(std::iter::repeat_n(
@@ -477,16 +479,24 @@ impl<'a> CardStore<'a> {
                     "Card ID '{}' from decklist not found in local catalog",
                     entry.card_id
                 );
+                not_found.push(entry.card_id.clone());
             }
         }
 
-        Ok(requests)
+        Ok(ResolvedCardRequests {
+            requests,
+            not_found,
+        })
     }
 
     pub async fn get_available_printings(
         &mut self,
         card_requests: &[CardRequest],
     ) -> Result<HashMap<String, Vec<Printing>>> {
+        if card_requests.is_empty() {
+            return Ok(HashMap::new());
+        }
+
         let unique_titles: HashSet<String> = card_requests
             .iter()
             .map(|r| normalize_title(&r.title))
@@ -1084,7 +1094,8 @@ mod tests {
             ],
         };
 
-        let requests = store.resolve_decklist_to_requests(&decklist).await.unwrap();
+        let result = store.resolve_decklist_to_requests(&decklist).await.unwrap();
+        let requests = result.requests;
 
         assert_eq!(requests.len(), 4);
 

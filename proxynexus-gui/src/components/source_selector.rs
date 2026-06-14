@@ -25,6 +25,8 @@ pub struct SourceSelectorProps {
     pub source_state: Signal<ActiveSource>,
     pub db_signal: Signal<Arc<Mutex<DbStorage>>>,
     pub on_source_changed: EventHandler<()>,
+    #[props(default = None)]
+    pub active_card_name: Option<Signal<Option<String>>>,
 }
 
 #[component]
@@ -154,9 +156,11 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
             match tab() {
                 "list" => rsx! {
                     CardListInput {
+                        key: "{active_game_id().unwrap_or_default()}",
                         all_cards,
                         list_text: list_text,
                         disabled: is_disabled(),
+                        active_card_name: props.active_card_name,
                         oninput: move |text: String| {
                             list_text.set(text.clone());
                             source_state.set(ActiveSource::Cardlist(text));
