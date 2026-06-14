@@ -1,6 +1,9 @@
+#[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::games::agot::api::{fetch_all_cards, fetch_all_packs};
 use async_trait::async_trait;
 
@@ -18,6 +21,7 @@ impl AgotAdapter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for AgotAdapter {
     fn game_id(&self) -> &'static str {
