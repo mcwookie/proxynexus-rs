@@ -4,6 +4,7 @@ use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
+use crate::games::GameAdapterInfo;
 use crate::games::l5r::api::fetch_decklist_from_emeralddb;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::l5r::api::{fetch_cards, fetch_packs};
@@ -27,9 +28,7 @@ impl L5rAdapter {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-impl CatalogProvider for L5rAdapter {
+impl GameAdapterInfo for L5rAdapter {
     fn game_id(&self) -> &'static str {
         "l5r"
     }
@@ -38,6 +37,14 @@ impl CatalogProvider for L5rAdapter {
         "Legend of the Five Rings"
     }
 
+    fn subdomains(&self) -> Vec<&'static str> {
+        vec!["l5r"]
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl CatalogProvider for L5rAdapter {
     async fn fetch_catalog(&self) -> Result<Catalog> {
         let (cards_result, packs_result) = join!(fetch_cards(), fetch_packs());
         let l5r_cards = cards_result?;

@@ -1,5 +1,6 @@
 use crate::db_storage::{DbStorage, quote_sql_string};
 use crate::error::Result;
+use crate::games::GameAdapterInfo;
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
@@ -42,11 +43,7 @@ pub struct Catalog {
 }
 
 #[async_trait]
-pub trait CatalogProvider: Send + Sync {
-    fn game_id(&self) -> &'static str;
-
-    fn game_name(&self) -> &'static str;
-
+pub trait CatalogProvider: GameAdapterInfo + Send + Sync {
     async fn fetch_catalog(&self) -> Result<Catalog>;
 }
 

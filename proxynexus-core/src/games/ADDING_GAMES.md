@@ -24,10 +24,32 @@ proxynexus-core/src/games/new_game/
 ```
 
 ## 2. Implement the Adapter
-Your game needs an adapter struct that implements two traits: `CatalogProvider` and `DecklistProvider`.
+Your game needs an adapter struct that implements the base `GameAdapterInfo` trait, 
+as well as `CatalogProvider` and optionally `DecklistProvider` and `CardBackProvider`.
 
 **WASM Compatibility Tip:** Proxy Nexus compiles to `wasm32-unknown-unknown` for the web interface. 
 Ensure your API requests in the adapter use conditionally compiled code (`reqwest` for native, `gloo_net::http` for WASM). See the `netrunner::api` module for an example.
+
+### `GameAdapterInfo`
+Found in `proxynexus-core/src/games/mod.rs`. It provides basic metadata and subdomain mapping for the game.
+
+```rust
+use crate::games::GameAdapterInfo;
+
+impl GameAdapterInfo for NewGameAdapter {
+    fn game_id(&self) -> &'static str {
+        "new_game" // A short, unique game id
+    }
+
+    fn game_name(&self) -> &'static str {
+        "New Game" // Display name
+    }
+
+    fn subdomains(&self) -> Vec<&'static str> {
+        vec!["newgame"] // Optional subdomains for web routing
+    }
+}
+```
 
 ### `CatalogProvider`
 Found in `proxynexus-core/src/catalog.rs`. It provides Proxy Nexus with a standardized representation of the game's catalog.
@@ -39,14 +61,6 @@ use crate::error::Result;
 
 #[async_trait]
 impl CatalogProvider for NewGameAdapter {
-    fn game_id(&self) -> &'static str {
-        "new_game" // A short, unique game id
-    }
-
-    fn game_name(&self) -> &'static str {
-        "New Game" // Display name
-    }
-
     async fn fetch_catalog(&self) -> Result<Catalog> {
         // 1. Fetch data from the game's API or load a JSON file
         // 2. Map the data to Proxy Nexus's `Pack`, `Card`, and `CardVersion` structs
@@ -129,7 +143,19 @@ impl<'a> CatalogManager<'a> {
 }
 ```
 
-**B. Register for Decklist Parsing (`proxynexus-core/src/games/mod.rs`)**
+**B. Register for Subdomain Routing (`proxynexus-core/src/games/mod.rs`)**
+If you defined `subdomains` in `GameAdapterInfo`, add your adapter to `get_game_id_by_subdomain`.
+```rust
+pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
+    let adapters: Vec<Box<dyn GameAdapterInfo>> = vec![
+        Box::new(NetrunnerAdapter::new()),
+        Box::new(NewGameAdapter::new()), // Register your game
+    ];
+    // ...
+}
+```
+
+**C. Register for Decklist Parsing (`proxynexus-core/src/games/mod.rs`)**
 Export your module and add it to `get_decklist_adapter` inside `proxynexus-core/src/games/mod.rs`.
 Remember to return `None` if your game does not implement `DecklistProvider`.
 ```rust
@@ -150,7 +176,7 @@ pub fn get_decklist_adapter(game_id: &str) -> Option<Box<dyn DecklistProvider>> 
 }
 ```
 
-**C. Register for Card Backs (`proxynexus-core/src/games/mod.rs`)**
+**D. Register for Card Backs (`proxynexus-core/src/games/mod.rs`)**
 Similar to decklists, register your adapter in `get_card_back_adapter` if your game implements `CardBackProvider`.
 ```rust
 pub fn get_card_back_adapter(game_id: &str) -> Option<Box<dyn CardBackProvider>> {

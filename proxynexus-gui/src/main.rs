@@ -301,12 +301,28 @@ fn copy_selection_to_clipboard(game_id: &str, printings: &[Printing]) {
 fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let progress = use_signal(|| None::<f32>);
 
-    let (url_game, url_list) = {
+    let (url_game, url_list, subdomain_game) = {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(window) = web_sys::window() {
-                let params = window
-                    .location()
+                let location = window.location();
+
+                let subdomain_game = location.hostname().ok().and_then(|hostname| {
+                    let parts: Vec<&str> = hostname.split('.').collect();
+                    if parts.len() >= 2 {
+                        let subdomain = parts[0];
+                        if subdomain != "www" && subdomain != "proxynexus" {
+                            proxynexus_core::games::get_game_id_by_subdomain(subdomain)
+                                .map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+
+                let params = location
                     .search()
                     .ok()
                     .and_then(|s| web_sys::UrlSearchParams::new_with_str(&s).ok())
@@ -314,18 +330,22 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
 
                 let game = params.as_ref().and_then(|p| p.get("game"));
                 let list = params.as_ref().and_then(|p| p.get("list"));
-                (game, list)
+                (game, list, subdomain_game)
             } else {
-                (None, None)
+                (None, None, None)
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
-        (None::<String>, None::<String>)
+        (None::<String>, None::<String>, None::<String>)
     };
 
     let mut active_game_id = use_signal(|| {
         if url_game.is_some() {
             return url_game;
+        }
+
+        if subdomain_game.is_some() {
+            return subdomain_game;
         }
 
         #[cfg(target_arch = "wasm32")]

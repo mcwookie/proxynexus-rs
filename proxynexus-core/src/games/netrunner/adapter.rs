@@ -4,6 +4,7 @@ use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
+use crate::games::GameAdapterInfo;
 use crate::games::netrunner::api::fetch_decklist_from_nrdb;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::netrunner::api::{fetch_card_sets, fetch_cards, fetch_printings};
@@ -25,9 +26,7 @@ impl NetrunnerAdapter {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-impl CatalogProvider for NetrunnerAdapter {
+impl GameAdapterInfo for NetrunnerAdapter {
     fn game_id(&self) -> &'static str {
         "netrunner"
     }
@@ -36,6 +35,14 @@ impl CatalogProvider for NetrunnerAdapter {
         "Netrunner"
     }
 
+    fn subdomains(&self) -> Vec<&'static str> {
+        vec!["netrunner"]
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
+impl CatalogProvider for NetrunnerAdapter {
     async fn fetch_catalog(&self) -> Result<Catalog> {
         let nrdb_sets = fetch_card_sets().await?;
         let nrdb_cards = fetch_cards().await?;
