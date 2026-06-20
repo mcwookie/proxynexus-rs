@@ -1,8 +1,10 @@
 use crate::error::{ProxyNexusError, Result};
+use crate::games::fetch_json;
 use crate::games::netrunner::models::{
     NrdbCard, NrdbCardSet, NrdbPrinting, NrdbResponse, NrdbV2DeckResponse,
 };
 use crate::models::Decklist;
+use serde::de::DeserializeOwned;
 
 const BASE_URL: &str = "https://api.netrunnerdb.com/api/v3/public";
 
@@ -18,24 +20,13 @@ pub async fn fetch_printings() -> Result<Vec<NrdbPrinting>> {
     fetch_v3_endpoint(&format!("{}/printings?page[size]=1000", BASE_URL)).await
 }
 
-pub async fn fetch_v3_endpoint<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<Vec<T>> {
+pub async fn fetch_v3_endpoint<T: DeserializeOwned>(url: &str) -> Result<Vec<T>> {
     let mut all_data = Vec::new();
     let mut current_url = Some(url.to_string());
 
     while let Some(u) = current_url {
-        #[cfg(not(target_arch = "wasm32"))]
-        let json_str = reqwest::get(&u).await?.text().await?;
-
-        #[cfg(target_arch = "wasm32")]
-        let json_str = gloo_net::http::Request::get(&u)
-            .send()
-            .await?
-            .text()
-            .await?;
-
-        let response: NrdbResponse<T> = serde_json::from_str(&json_str)?;
+        let response: NrdbResponse<T> = fetch_json(&u).await?;
         all_data.extend(response.data);
-
         current_url = response.links.and_then(|l| l.next);
     }
 
@@ -50,7 +41,7 @@ pub async fn fetch_decklist_from_nrdb(url: &str) -> Result<Decklist> {
         api_path, deck_id
     );
 
-    let response: NrdbV2DeckResponse = crate::games::fetch_json(&api_url).await?;
+    let response: NrdbV2DeckResponse = fetch_json(&api_url).await?;
 
     let cards_res = response
         .data
