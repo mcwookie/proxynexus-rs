@@ -2,10 +2,12 @@ pub mod agot;
 pub mod l5r;
 pub mod netrunner;
 use crate::card_source::DecklistProvider;
+use crate::error::{ProxyNexusError, Result};
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use crate::mpc::CardBackProvider;
+use serde::de::DeserializeOwned;
 
 pub trait GameAdapterInfo {
     fn game_id(&self) -> &'static str;
@@ -34,6 +36,7 @@ pub fn get_decklist_adapter(game_id: &str) -> Option<Box<dyn DecklistProvider>> 
     match game_id {
         "netrunner" => Some(Box::new(NetrunnerAdapter::new())),
         "l5r" => Some(Box::new(L5rAdapter::new())),
+        "agot" => Some(Box::new(AgotAdapter::new())),
         _ => None,
     }
 }
@@ -43,5 +46,45 @@ pub fn get_card_back_adapter(game_id: &str) -> Option<Box<dyn CardBackProvider>>
         "netrunner" => Some(Box::new(NetrunnerAdapter::new())),
         "l5r" => Some(Box::new(L5rAdapter::new())),
         _ => None,
+    }
+}
+
+pub async fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T> {
+    let domain = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or(url);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let http_response = reqwest::get(url).await?;
+
+        if !http_response.status().is_success() {
+            return Err(ProxyNexusError::Internal(format!(
+                "{} returned error: {}",
+                domain,
+                http_response.status()
+            )));
+        }
+
+        Ok(http_response.json().await?)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let http_response = gloo_net::http::Request::get(url).send().await?;
+
+        if !http_response.ok() {
+            return Err(ProxyNexusError::Internal(format!(
+                "{} returned error: {}",
+                domain,
+                http_response.status()
+            )));
+        }
+
+        Ok(http_response.json().await?)
     }
 }

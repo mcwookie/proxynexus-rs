@@ -1,7 +1,7 @@
 use crate::error::{ProxyNexusError, Result};
+use crate::games::fetch_json;
 use crate::games::l5r::models::{Card, EmeraldDbDecklist, Pack};
 use crate::models::{Decklist, DecklistEntry};
-use serde::de::DeserializeOwned;
 
 const CARDS_URL: &str = "https://www.emeralddb.org/api/cards";
 const PACKS_URL: &str = "https://www.emeralddb.org/api/packs";
@@ -50,36 +50,6 @@ fn extract_path_segment(url: &str, segment: &str) -> Option<String> {
                 .to_string()
         })
         .filter(|s| !s.is_empty())
-}
-
-async fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let http_response = reqwest::get(url).await?;
-
-        if !http_response.status().is_success() {
-            return Err(ProxyNexusError::Internal(format!(
-                "EmeraldDB returned error: {}",
-                http_response.status()
-            )));
-        }
-
-        Ok(http_response.json().await?)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let http_response = gloo_net::http::Request::get(url).send().await?;
-
-        if !http_response.ok() {
-            return Err(ProxyNexusError::Internal(format!(
-                "EmeraldDB returned error: {}",
-                http_response.status()
-            )));
-        }
-
-        Ok(http_response.json().await?)
-    }
 }
 
 #[cfg(test)]

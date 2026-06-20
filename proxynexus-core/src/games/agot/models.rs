@@ -17,3 +17,8 @@ pub struct AgotPack {
     pub name: String,
     pub available: Option<String>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgotDecklist {
+    pub slots: std::collections::HashMap<String, u32>,
+}

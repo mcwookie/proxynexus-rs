@@ -50,35 +50,7 @@ pub async fn fetch_decklist_from_nrdb(url: &str) -> Result<Decklist> {
         api_path, deck_id
     );
 
-    let response: NrdbV2DeckResponse = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let http_response = reqwest::get(&api_url).await?;
-
-            if !http_response.status().is_success() {
-                return Err(ProxyNexusError::Internal(format!(
-                    "NetrunnerDB returned error: {}",
-                    http_response.status()
-                )));
-            }
-
-            http_response.json().await?
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let http_response = gloo_net::http::Request::get(&api_url).send().await?;
-
-            if !http_response.ok() {
-                return Err(ProxyNexusError::Internal(format!(
-                    "NetrunnerDB returned error: {}",
-                    http_response.status()
-                )));
-            }
-
-            http_response.json().await?
-        }
-    };
+    let response: NrdbV2DeckResponse = crate::games::fetch_json(&api_url).await?;
 
     let cards_res = response
         .data

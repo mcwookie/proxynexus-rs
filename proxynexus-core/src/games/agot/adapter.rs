@@ -1,11 +1,14 @@
+use crate::card_source::DecklistProvider;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
 use crate::games::GameAdapterInfo;
+use crate::games::agot::api::fetch_decklist_from_thronesdb;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::agot::api::{fetch_all_cards, fetch_all_packs};
+use crate::models::Decklist;
 use async_trait::async_trait;
 
 pub struct AgotAdapter {}
@@ -98,5 +101,13 @@ impl CatalogProvider for AgotAdapter {
             cards,
             card_versions: versions,
         })
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl DecklistProvider for AgotAdapter {
+    async fn fetch(&self, url: &str) -> Result<Decklist> {
+        fetch_decklist_from_thronesdb(url).await
     }
 }

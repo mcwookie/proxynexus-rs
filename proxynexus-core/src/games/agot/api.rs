@@ -1,29 +1,66 @@
-use crate::error::Result;
-use crate::games::agot::models::{AgotCard, AgotPack};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::card_store::normalize_title;
+use crate::error::{ProxyNexusError, Result};
+use crate::games::agot::models::{AgotCard, AgotDecklist, AgotPack};
+use crate::games::fetch_json;
+use crate::models::{Decklist, DecklistEntry};
 
 const BASE_URL: &str = "https://thronesdb.com/api/public";
 
 pub async fn fetch_all_packs() -> Result<Vec<AgotPack>> {
-    let url = format!("{}/packs/", BASE_URL);
-    fetch_json_array(&url).await
+    fetch_json(&format!("{}/packs/", BASE_URL)).await
 }
 
 pub async fn fetch_all_cards() -> Result<Vec<AgotCard>> {
-    let url = format!("{}/cards/", BASE_URL);
-    fetch_json_array(&url).await
+    fetch_json(&format!("{}/cards/", BASE_URL)).await
 }
 
-async fn fetch_json_array<T: for<'de> serde::Deserialize<'de>>(url: &str) -> Result<Vec<T>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let json_str = reqwest::get(url).await?.text().await?;
+pub async fn fetch_decklist_from_thronesdb(url: &str) -> Result<Decklist> {
+    let deck_id = parse_thronesdb_url(url)?;
+    let api_url = format!("{}/decklist/{}", BASE_URL, deck_id);
+    let decklist_response: AgotDecklist = fetch_json(&api_url).await?;
 
-    #[cfg(target_arch = "wasm32")]
-    let json_str = gloo_net::http::Request::get(url)
-        .send()
-        .await?
-        .text()
-        .await?;
+    let all_cards = fetch_all_cards().await?;
+    let mut code_to_card = std::collections::HashMap::new();
+    for card in all_cards {
+        code_to_card.insert(card.code.clone(), card);
+    }
 
-    let data: Vec<T> = serde_json::from_str(&json_str)?;
-    Ok(data)
+    let mut cards = Vec::new();
+    for (code, quantity) in decklist_response.slots {
+        if let Some(card) = code_to_card.get(&code) {
+            #[cfg(not(target_arch = "wasm32"))]
+            let card_id = normalize_title(&card.label);
+
+            #[cfg(target_arch = "wasm32")]
+            let card_id = crate::card_store::normalize_title(&card.label);
+
+            cards.push(DecklistEntry {
+                card_id,
+                pack_id: Some(card.pack_code.clone()),
+                quantity,
+            });
+        }
+    }
+
+    Ok(Decklist { cards })
+}
+
+fn parse_thronesdb_url(url: &str) -> Result<String> {
+    extract_path_segment(url, "/decklist/view/")
+        .or_else(|| extract_path_segment(url, "/api/public/decklist/"))
+        .ok_or_else(|| ProxyNexusError::Internal("Invalid ThronesDB decklist URL".into()))
+}
+
+fn extract_path_segment(url: &str, segment: &str) -> Option<String> {
+    url.split(segment)
+        .nth(1)
+        .map(|s| {
+            s.trim_end_matches('/')
+                .split(['/', '?', '#'])
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
 }

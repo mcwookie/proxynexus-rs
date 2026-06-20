@@ -28,7 +28,9 @@ Your game needs an adapter struct that implements the base `GameAdapterInfo` tra
 as well as `CatalogProvider` and optionally `DecklistProvider` and `CardBackProvider`.
 
 **WASM Compatibility Tip:** Proxy Nexus compiles to `wasm32-unknown-unknown` for the web interface. 
-Ensure your API requests in the adapter use conditionally compiled code (`reqwest` for native, `gloo_net::http` for WASM). See the `netrunner::api` module for an example.
+Consider using the `crate::games::fetch_json(url)` helper for making API requests,
+as it already handles the conditionally compiled code (`reqwest` for native, `gloo_net::http` for WASM) 
+and error handling for you.
 
 ### `GameAdapterInfo`
 Found in `proxynexus-core/src/games/mod.rs`. It provides basic metadata and subdomain mapping for the game.
