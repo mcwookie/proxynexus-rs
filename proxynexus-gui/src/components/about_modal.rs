@@ -39,7 +39,7 @@ pub fn AboutModal(props: AboutModalProps) -> Element {
                 p { class: "text-center mb-8", "by Alex McCulloch (axmccx)" }
 
                 h5 { class: "text-sm font-bold mb-2 text-center", "with contributions from:" }
-                p { class: "text-center mb-8", "Fatih Inan" }
+                p { class: "text-center mb-2", "Fatih Inan" }
                 p { class: "text-center mb-8", "Dimitri" }
 
                 div { class: "flex flex-col gap-4 text-blue-600 items-center font-medium",
@@ -47,6 +47,10 @@ pub fn AboutModal(props: AboutModalProps) -> Element {
                     a { href: "https://github.com/axmccx/proxynexus-rs", target: "_blank", class: "hover:underline", "GitHub" }
                     a { href: "https://us.posthog.com/shared/Mo4ZScqPqTkiJ01AEJtx8pzc4YqBag", target: "_blank", class: "hover:underline", "Statistics" }
                     a { href: "https://ko-fi.com/axmccx", target: "_blank", class: "hover:underline", "Donate" }
+                }
+
+                p { class: "text-center text-xs text-gray-500 mt-8",
+                    "proxynexus.net is not affiliated or associated with any organization or publisher of games available on this website."
                 }
             }
         }
