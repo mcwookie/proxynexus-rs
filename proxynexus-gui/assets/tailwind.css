@@ -613,6 +613,9 @@
   .pt-4 {
     padding-top: calc(var(--spacing) * 4);
   }
+  .pb-1 {
+    padding-bottom: calc(var(--spacing) * 1);
+  }
   .text-center {
     text-align: center;
   }
@@ -657,6 +660,9 @@
   }
   .whitespace-nowrap {
     white-space: nowrap;
+  }
+  .text-blue-500 {
+    color: var(--color-blue-500);
   }
   .text-blue-600 {
     color: var(--color-blue-600);
@@ -843,6 +849,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-blue-500);
+      }
+    }
+  }
+  .hover\:text-blue-700 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-blue-700);
       }
     }
   }

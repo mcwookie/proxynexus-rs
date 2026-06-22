@@ -91,6 +91,7 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
     let mut cut_line_thickness = use_signal(|| DEFAULT_CUT_LINE_THICKNESS.to_string());
     let mut print_layout = use_signal(PrintLayout::default);
     let mut upscale = use_signal(|| false);
+    let mut show_donate = use_signal(|| false);
 
     let thickness_value = use_memo(move || {
         cut_line_thickness()
@@ -341,122 +342,171 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
                 }
             }
 
-            if let Some(p) = (props.progress)() {
-                div { class: "mt-auto pt-4 md:pt-0 flex flex-col gap-2",
-                    div { class: "w-full bg-gray-200 rounded-full h-4 overflow-hidden",
-                        div {
-                            class: "bg-blue-600 h-full transition-all duration-75",
-                            style: "width: {p * 100.0}%",
+            div { class: "mt-auto pt-4 md:pt-0 flex flex-col gap-2",
+                if show_donate() {
+                    div { class: "text-sm text-center text-gray-600 pb-1",
+                        "finding this site useful? please consider "
+                        a {
+                            href: "https://ko-fi.com/axmccx",
+                            target: "_blank",
+                            class: "text-blue-500 hover:text-blue-700 hover:underline",
+                            "donating"
                         }
                     }
-                    div { class: "text-xs text-center text-gray-500 font-medium",
-                        "{ (p * 100.0) as u32 }%"
-                    }
                 }
-            } else {
-                div {
-                    class: "mt-auto pt-4 md:pt-0 flex items-center gap-3 md:gap-4",
 
-                    div { class: "flex flex-col items-center gap-1 shrink-0",
-                        div {
-                            class: "flex items-center gap-1 cursor-help group",
-                            onclick: move |_| {
-                                spawn(async move {
-                                    let mut eval = dioxus::document::eval(
-                                        "
-                                        let el = document.getElementById('upscale-info-btn');
-                                        let rect = el.getBoundingClientRect();
-                                        dioxus.send([rect.x, rect.y, rect.width]);
-                                        ",
-                                    );
-                                    if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
-                                        props.on_open_upscale_info.call((x, y, w));
-                                    }
-                                });
-                            },
-                            label { class: "text-xs md:text-sm font-medium text-gray-700 group-hover:text-blue-600 transition-colors cursor-help", "Upscale" }
+                if let Some(p) = (props.progress)() {
+                    div { class: "flex flex-col gap-2",
+                        div { class: "w-full bg-gray-200 rounded-full h-4 overflow-hidden",
                             div {
-                                id: "upscale-info-btn",
-                                class: "text-gray-400 group-hover:text-blue-500 transition-colors",
-                                svg {
-                                    xmlns: "http://www.w3.org/2000/svg",
-                                    width: "12",
-                                    height: "12",
-                                    view_box: "0 0 24 24",
-                                    fill: "none",
-                                    stroke: "currentColor",
-                                    stroke_width: "2.5",
-                                    stroke_linecap: "round",
-                                    stroke_linejoin: "round",
-                                    circle { cx: "12", cy: "12", r: "10" }
-                                    path { d: "M12 16v-4" }
-                                    path { d: "M12 8h.01" }
+                                class: "bg-blue-600 h-full transition-all duration-75",
+                                style: "width: {p * 100.0}%",
+                            }
+                        }
+                        div { class: "text-xs text-center text-gray-500 font-medium",
+                            "{ (p * 100.0) as u32 }%"
+                        }
+                    }
+                } else {
+                    div {
+                        class: "flex items-center gap-3 md:gap-4",
+
+                        div { class: "flex flex-col items-center gap-1 shrink-0",
+                            div {
+                                class: "flex items-center gap-1 cursor-help group",
+                                onclick: move |_| {
+                                    spawn(async move {
+                                        let mut eval = dioxus::document::eval(
+                                            "
+                                            let el = document.getElementById('upscale-info-btn');
+                                            let rect = el.getBoundingClientRect();
+                                            dioxus.send([rect.x, rect.y, rect.width]);
+                                            ",
+                                        );
+                                        if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
+                                            props.on_open_upscale_info.call((x, y, w));
+                                        }
+                                    });
+                                },
+                                label { class: "text-xs md:text-sm font-medium text-gray-700 group-hover:text-blue-600 transition-colors cursor-help", "Upscale" }
+                                div {
+                                    id: "upscale-info-btn",
+                                    class: "text-gray-400 group-hover:text-blue-500 transition-colors",
+                                    svg {
+                                        xmlns: "http://www.w3.org/2000/svg",
+                                        width: "12",
+                                        height: "12",
+                                        view_box: "0 0 24 24",
+                                        fill: "none",
+                                        stroke: "currentColor",
+                                        stroke_width: "2.5",
+                                        stroke_linecap: "round",
+                                        stroke_linejoin: "round",
+                                        circle { cx: "12", cy: "12", r: "10" }
+                                        path { d: "M12 16v-4" }
+                                        path { d: "M12 8h.01" }
+                                    }
+                                }
+                            }
+
+                            button {
+                                class: format!("relative inline-flex h-4 w-8 items-center rounded-full transition-colors focus:outline-none {}",
+                                    if upscale() { "bg-blue-600" } else { "bg-gray-300" }),
+                                disabled: !is_gpu_available,
+                                onclick: move |_| upscale.set(!upscale()),
+                                span {
+                                    class: format!("inline-block h-3 w-3 transform rounded-full bg-white transition-transform shadow-sm {}",
+                                        if upscale() { "translate-x-4.5" } else { "translate-x-0.5" }),
                                 }
                             }
                         }
 
-                        button {
-                            class: format!("relative inline-flex h-4 w-8 items-center rounded-full transition-colors focus:outline-none {}",
-                                if upscale() { "bg-blue-600" } else { "bg-gray-300" }),
-                            disabled: !is_gpu_available,
-                            onclick: move |_| upscale.set(!upscale()),
-                            span {
-                                class: format!("inline-block h-3 w-3 transform rounded-full bg-white transition-transform shadow-sm {}",
-                                    if upscale() { "translate-x-4.5" } else { "translate-x-0.5" }),
-                            }
-                        }
-                    }
+                        div {
+                            class: "flex-1",
+                            {
+                                let thickness_invalid = cut_lines() == CutLines::FullPage && thickness_value().is_none();
+                                let disabled = props.is_disabled || thickness_invalid;
+                                let btn_base = "w-full py-1.5 md:py-2 px-3 md:px-4 font-semibold rounded-md shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 text-xs md:text-sm";
+                                let btn_state = if disabled {
+                                    "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                } else {
+                                    "bg-blue-600 hover:bg-blue-700 text-white"
+                                };
 
-                    div {
-                        class: "flex-1",
-                        {
-                            let thickness_invalid = cut_lines() == CutLines::FullPage && thickness_value().is_none();
-                            let disabled = props.is_disabled || thickness_invalid;
-                            let btn_base = "w-full py-1.5 md:py-2 px-3 md:px-4 font-semibold rounded-md shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 text-xs md:text-sm";
-                            let btn_state = if disabled {
-                                "bg-gray-300 text-gray-500 cursor-not-allowed"
-                            } else {
-                                "bg-blue-600 hover:bg-blue-700 text-white"
-                            };
-
-                            rsx! {
-                                button {
-                                    class: "{btn_base} {btn_state}",
-                                    disabled,
-                                    onclick: move |_| {
-                                        if disabled { return; }
-                                        let options = match export_format() {
-                                            ExportFormat::Mpc => {
-                                                ExportOptions::Mpc(MpcOptions { upscale: upscale() })
+                                rsx! {
+                                    button {
+                                        class: "{btn_base} {btn_state}",
+                                        disabled,
+                                        onclick: move |_| {
+                                            if disabled { return; }
+                                            #[cfg(target_arch = "wasm32")]
+                                            {
+                                                let generated = has_generated_before();
+                                                if generated {
+                                                    show_donate.set(true);
+                                                } else {
+                                                    set_has_generated();
+                                                }
                                             }
-                                            ExportFormat::Pdf => {
-                                                let Some(page_size) = validation.result else { return };
-                                                let thickness = match cut_lines() {
-                                                    CutLines::None => 0.0,
-                                                    CutLines::Margins => DEFAULT_CUT_LINE_THICKNESS,
-                                                    CutLines::FullPage => match thickness_value() {
-                                                        Some(t) => t,
-                                                        None => return,
-                                                    },
-                                                };
-                                                ExportOptions::Pdf(PdfOptions {
-                                                    page_size,
-                                                    cut_lines: cut_lines(),
-                                                    print_layout: print_layout(),
-                                                    cut_line_thickness: thickness,
-                                                    upscale: upscale(),
-                                                })
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            {
+                                                show_donate.set(true);
                                             }
-                                        };
-                                        props.on_generate.call(options);
-                                    },
-                                    "Generate"
+                                            let options = match export_format() {
+                                                ExportFormat::Mpc => {
+                                                    ExportOptions::Mpc(MpcOptions { upscale: upscale() })
+                                                }
+                                                ExportFormat::Pdf => {
+                                                    let Some(page_size) = validation.result else { return };
+                                                    let thickness = match cut_lines() {
+                                                        CutLines::None => 0.0,
+                                                        CutLines::Margins => DEFAULT_CUT_LINE_THICKNESS,
+                                                        CutLines::FullPage => match thickness_value() {
+                                                            Some(t) => t,
+                                                            None => return,
+                                                        },
+                                                    };
+                                                    ExportOptions::Pdf(PdfOptions {
+                                                        page_size,
+                                                        cut_lines: cut_lines(),
+                                                        print_layout: print_layout(),
+                                                        cut_line_thickness: thickness,
+                                                        upscale: upscale(),
+                                                    })
+                                                }
+                                            };
+                                            props.on_generate.call(options);
+                                        },
+                                        "Generate"
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn has_generated_before() -> bool {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(local_storage)) = window.local_storage() {
+            return local_storage
+                .get_item("proxynexus_has_generated")
+                .unwrap_or(None)
+                .is_some();
+        }
+    }
+    false
+}
+
+#[cfg(target_arch = "wasm32")]
+fn set_has_generated() {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(local_storage)) = window.local_storage() {
+            let _ = local_storage.set_item("proxynexus_has_generated", "true");
         }
     }
 }
