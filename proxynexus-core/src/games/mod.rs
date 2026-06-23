@@ -63,7 +63,11 @@ pub async fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T> {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let http_response = reqwest::get(url).await?;
+        let client = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .build()?;
+
+        let http_response = client.get(url).send().await?;
 
         if !http_response.status().is_success() {
             return Err(ProxyNexusError::Internal(format!(
