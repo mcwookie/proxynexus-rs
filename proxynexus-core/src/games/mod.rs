@@ -1,10 +1,12 @@
 pub mod agot;
 pub mod l5r;
+pub mod lotrlcg;
 pub mod netrunner;
 use crate::card_source::DecklistProvider;
 use crate::error::{ProxyNexusError, Result};
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
+use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use crate::mpc::CardBackProvider;
 use serde::de::DeserializeOwned;
@@ -22,6 +24,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(NetrunnerAdapter::new()),
         Box::new(L5rAdapter::new()),
         Box::new(AgotAdapter::new()),
+        Box::new(LotrLcgAdapter::new()),
     ];
 
     for adapter in adapters {
