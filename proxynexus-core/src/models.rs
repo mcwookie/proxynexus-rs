@@ -39,6 +39,16 @@ impl PrintingPart {
             .map(|k| (k, true))
             .unwrap_or_else(|| (self.image_key.clone(), false))
     }
+
+    pub fn pdf_image(&self) -> (String, bool) {
+        if !self.image_key.is_empty() {
+            (self.image_key.clone(), false)
+        } else if let Some(bleed) = &self.bleed_image_key {
+            (bleed.clone(), true)
+        } else {
+            (String::new(), false)
+        }
+    }
 }
 
 impl Printing {
@@ -47,6 +57,16 @@ impl Printing {
             .clone()
             .map(|k| (k, true))
             .unwrap_or_else(|| (self.image_key.clone(), false))
+    }
+
+    pub fn pdf_image(&self) -> (String, bool) {
+        if !self.image_key.is_empty() {
+            (self.image_key.clone(), false)
+        } else if let Some(bleed) = &self.bleed_image_key {
+            (bleed.clone(), true)
+        } else {
+            (String::new(), false)
+        }
     }
 }
 

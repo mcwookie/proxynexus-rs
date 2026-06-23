@@ -31,6 +31,24 @@ impl BleedConfig {
     }
 }
 
+pub fn crop_bleed_border(img: &DynamicImage) -> DynamicImage {
+    let width = img.width();
+    let height = img.height();
+
+    let bleed_x_ratio = (BLEED_WIDTH - CUT_WIDTH) / 2.0 / BLEED_WIDTH;
+    let bleed_y_ratio = (BLEED_HEIGHT - CUT_HEIGHT) / 2.0 / BLEED_HEIGHT;
+
+    let crop_x = (width as f32 * bleed_x_ratio).round() as u32;
+    let crop_y = (height as f32 * bleed_y_ratio).round() as u32;
+
+    img.crop_imm(
+        crop_x,
+        crop_y,
+        width.saturating_sub(crop_x * 2),
+        height.saturating_sub(crop_y * 2),
+    )
+}
+
 pub fn add_bleed_border(img: &DynamicImage) -> RgbImage {
     let (orig_w, orig_h) = img.dimensions();
 

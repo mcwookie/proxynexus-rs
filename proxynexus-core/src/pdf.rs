@@ -147,11 +147,11 @@ pub async fn generate_pdf(
     let total_images: usize = printings.iter().map(|p| 1 + p.parts.len()).sum();
     let mut processed_images: usize = 0;
 
-    let mut image_keys: Vec<String> = Vec::with_capacity(total_images);
+    let mut image_requests: Vec<(String, bool)> = Vec::with_capacity(total_images);
     for p in &printings {
-        image_keys.push(p.image_key.clone());
+        image_requests.push(p.pdf_image());
         for part in &p.parts {
-            image_keys.push(part.image_key.clone());
+            image_requests.push(part.pdf_image());
         }
     }
 
@@ -162,12 +162,12 @@ pub async fn generate_pdf(
     let (max_rows, max_cols) = options.capacity();
     let max_cards_per_page = max_rows * max_cols;
 
-    for chunk in image_keys.chunks(max_cards_per_page) {
+    for chunk in image_requests.chunks(max_cards_per_page) {
         let page_settings = PageSettings::from_wh(page_width, page_height).unwrap();
         let mut page = document.start_page_with(page_settings);
         let mut surface = page.surface();
 
-        for (index, image_key) in chunk.iter().enumerate() {
+        for (index, (image_key, requires_cropping)) in chunk.iter().enumerate() {
             let start = Instant::now();
 
             if !image_cache.contains_key(image_key) {
@@ -175,6 +175,13 @@ pub async fn generate_pdf(
 
                 if options.upscale {
                     image_data = crate::upscale_image(&image_data).await?
+                }
+
+                if *requires_cropping {
+                    let img = image::load_from_memory(&image_data)?;
+                    let cropped_img = crate::print_prep::crop_bleed_border(&img).to_rgb8();
+                    let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
+                    image_data = crate::print_prep::encode_image(cropped_img, format)?;
                 }
 
                 let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);

@@ -181,15 +181,6 @@ impl<'a> CollectionManager<'a> {
             }
         }
 
-        for ((api_id, printing, part), (has_non_bleed, has_bleed)) in parts_map {
-            if has_bleed && !has_non_bleed {
-                return Err(ProxyNexusError::Internal(format!(
-                    "Validation error: Found bleed image for card '{}' ({}) part '{}', but no standard non-bleed image.",
-                    api_id, printing, part
-                )));
-            }
-        }
-
         for ((api_id, printing), front_exists) in has_front {
             if !front_exists {
                 return Err(ProxyNexusError::Internal(format!(
