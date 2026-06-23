@@ -81,12 +81,21 @@ pub fn VariantSelector(props: VariantSelectorProps) -> Element {
                                         selected_variant_str.set(Some(v_str.clone()));
                                     }
                                 },
-                                img {
-                                    src: "{build_image_url(&v.image_key)}",
-                                    crossorigin: "anonymous",
-                                    class: "w-full h-full object-cover",
-                                    style: "image-rendering: auto; -webkit-backface-visibility: hidden; transform: translateZ(0);",
-                                    alt: "{variant_label}",
+                                {
+                                    let (image_key, is_bleed) = v.pdf_image();
+                                    let style = if is_bleed {
+                                        "width: 109.6774%; height: 106.9364%; max-width: none; flex-shrink: 0; image-rendering: auto; -webkit-backface-visibility: hidden;"
+                                    } else {
+                                        "width: 100%; height: 100%; object-fit: cover; image-rendering: auto; -webkit-backface-visibility: hidden; transform: translateZ(0);"
+                                    };
+                                    rsx! {
+                                        img {
+                                            src: "{build_image_url(&image_key)}",
+                                            crossorigin: "anonymous",
+                                            style: "{style}",
+                                            alt: "{variant_label}",
+                                        }
+                                    }
                                 }
                             }
                         }
