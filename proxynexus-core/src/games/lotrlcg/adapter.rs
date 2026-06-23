@@ -1,8 +1,13 @@
+#[cfg(not(target_arch = "wasm32"))]
 use super::models::HobCard;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
-use crate::games::{GameAdapterInfo, fetch_json};
+use crate::games::GameAdapterInfo;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::games::fetch_json;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
@@ -34,6 +39,7 @@ impl GameAdapterInfo for LotrLcgAdapter {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for LotrLcgAdapter {
     async fn fetch_catalog(&self) -> Result<Catalog> {
