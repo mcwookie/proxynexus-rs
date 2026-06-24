@@ -40,6 +40,7 @@ pub fn get_decklist_adapter(game_id: &str) -> Option<Box<dyn DecklistProvider>> 
         "netrunner" => Some(Box::new(NetrunnerAdapter::new())),
         "l5r" => Some(Box::new(L5rAdapter::new())),
         "agot" => Some(Box::new(AgotAdapter::new())),
+        "lotrlcg" => Some(Box::new(LotrLcgAdapter::new())),
         _ => None,
     }
 }

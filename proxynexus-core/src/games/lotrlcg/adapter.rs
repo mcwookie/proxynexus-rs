@@ -1,5 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::models::HobCard;
+use crate::card_source::DecklistProvider;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
@@ -8,7 +9,10 @@ use crate::error::Result;
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::fetch_json;
+use crate::games::lotrlcg::api::fetch_decklist_from_ringsdb;
+use crate::models::Decklist;
 use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::{HashMap, HashSet};
 
 pub struct LotrLcgAdapter;
@@ -39,6 +43,14 @@ impl GameAdapterInfo for LotrLcgAdapter {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl DecklistProvider for LotrLcgAdapter {
+    async fn fetch(&self, url: &str) -> Result<Decklist> {
+        fetch_decklist_from_ringsdb(url).await
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for LotrLcgAdapter {
@@ -57,13 +69,23 @@ impl CatalogProvider for LotrLcgAdapter {
         let mut packs = Vec::new();
         let mut seen_pack_names = HashSet::new();
 
+        // Build a mapping of normalized pack name to release date from RingsDB
+        let mut pack_dates = HashMap::new();
+        if let Ok(ringsdb_packs) = crate::games::lotrlcg::api::fetch_ringsdb_packs().await {
+            for rp in ringsdb_packs {
+                let clean_pack_name = rp.name.replace("ALeP - ", "").replace(".English", "");
+                let clean_pack_id = normalize_title(&clean_pack_name);
+                pack_dates.insert(clean_pack_id, rp.available);
+            }
+        }
+
         for c in &all_hob_cards {
             let clean_pack_id = normalize_title(&c.card_set);
             if seen_pack_names.insert(clean_pack_id.clone()) {
                 packs.push(Pack {
-                    id: clean_pack_id,
+                    id: clean_pack_id.clone(),
                     name: c.card_set.clone(),
-                    date_release: None,
+                    date_release: pack_dates.get(&clean_pack_id).cloned(),
                 });
             }
         }
@@ -116,11 +138,47 @@ impl CatalogProvider for LotrLcgAdapter {
 
             if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
                 card_versions.push(CardVersion {
-                    card_id: normalized_id.clone(),
+                    card_id: normalized_id,
                     pack_id: clean_pack_id,
                     quantity: c.quantity.unwrap_or(3),
                     position: Some(c.number),
                 });
+            }
+        }
+
+        // Fetch RingsDB cards to inject missing ALeP / custom cards not in Hall of Beorn
+        if let Ok(ringsdb_cards) = crate::games::lotrlcg::api::fetch_ringsdb_catalog().await {
+            for rc in ringsdb_cards {
+                let normalized_id = normalize_title(&rc.name);
+                let display_name = rc.pack_name.replace(".English", "");
+                let clean_pack_name = rc.pack_name.replace("ALeP - ", "").replace(".English", "");
+                let clean_pack_id = normalize_title(&clean_pack_name);
+
+                if seen_pack_names.insert(clean_pack_id.clone()) {
+                    packs.push(Pack {
+                        id: clean_pack_id.clone(),
+                        name: display_name,
+                        date_release: pack_dates.get(&clean_pack_id).cloned(),
+                    });
+                }
+
+                if seen_cards.insert(normalized_id.clone()) {
+                    cards.push(Card {
+                        id: normalized_id.clone(),
+                        title: rc.name,
+                        title_normalized: normalized_id.clone(),
+                        side: Some("player".to_string()),
+                    });
+                }
+
+                if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
+                    card_versions.push(CardVersion {
+                        card_id: normalized_id,
+                        pack_id: clean_pack_id,
+                        quantity: 3, // RingsDB doesn't provide pack quantity, assume 3
+                        position: Some(0), // Fallback position
+                    });
+                }
             }
         }
 

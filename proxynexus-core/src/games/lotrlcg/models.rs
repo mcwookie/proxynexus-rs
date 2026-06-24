@@ -17,3 +17,22 @@ pub struct HobCard {
     pub front: Option<HobCardFront>,
     pub card_type: String,
 }
+
+#[derive(Deserialize, Debug)]
+pub struct RingsdbDecklist {
+    pub slots: std::collections::HashMap<String, i64>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RingsdbCard {
+    pub code: String,
+    pub name: String,
+    pub pack_code: String,
+    pub pack_name: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RingsdbPack {
+    pub name: String,
+    pub available: String,
+}
