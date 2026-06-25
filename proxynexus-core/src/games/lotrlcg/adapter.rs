@@ -210,13 +210,12 @@ impl CatalogProvider for LotrLcgAdapter {
                         name: display_name.clone(),
                         date_release: None,
                     });
-                } else if is_alep {
-                    if let Some(pack) = packs
+                } else if is_alep
+                    && let Some(pack) = packs
                         .iter_mut()
                         .find(|p| p.id == clean_pack_id && !p.name.starts_with("ALeP - "))
-                    {
-                        pack.name = display_name;
-                    }
+                {
+                    pack.name = display_name;
                 }
 
                 let side = match rc.type_code.as_deref() {
