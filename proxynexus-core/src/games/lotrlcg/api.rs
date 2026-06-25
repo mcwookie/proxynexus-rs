@@ -62,9 +62,8 @@ fn extract_path_segment(url: &str, segment: &str) -> Option<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn fetch_ringsdb_catalog() -> Result<Vec<RingsdbCard>> {
-    let cards_response: Vec<RingsdbCard> =
-        fetch_json("https://ringsdb.com/api/public/cards/").await?;
+pub async fn fetch_alep_catalog() -> Result<Vec<RingsdbCard>> {
+    let cards_response: Vec<RingsdbCard> = fetch_json("http://hallofbeorn.com/Export/ALeP").await?;
     Ok(cards_response)
 }
 

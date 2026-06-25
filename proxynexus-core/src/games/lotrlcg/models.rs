@@ -29,6 +29,10 @@ pub struct RingsdbCard {
     pub name: String,
     pub pack_code: String,
     pub pack_name: String,
+    pub type_code: Option<String>,
+    pub position: Option<u32>,
+    pub quantity: Option<u32>,
+    pub is_official: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
