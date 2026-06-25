@@ -34,12 +34,6 @@ struct CardRequestRow {
 }
 
 #[derive(FromGlueRow)]
-struct CardRow {
-    id: String,
-    title: String,
-}
-
-#[derive(FromGlueRow)]
 struct CardTitleRow {
     title: String,
 }
@@ -443,32 +437,54 @@ impl<'a> CardStore<'a> {
         let in_clause = build_in_clause(card_ids);
 
         let query = format!(
-            "SELECT c.api_id as id, c.title
+            "SELECT 
+                c.api_id as id, 
+                c.title, 
+                p.api_id as pack_id, 
+                c.title_normalized
              FROM cards c
-             WHERE c.api_id IN ({})
-               AND c.game_id = {}",
+             JOIN card_versions v ON c.id = v.card_id
+             JOIN packs p ON v.pack_id = p.id
+             WHERE (c.api_id IN ({0}) OR c.title_normalized IN ({0}))
+               AND c.game_id = {1}",
             in_clause,
             quote_sql_string(&self.active_game_id)
         );
 
         let payloads = self.db.execute(&query).await?;
-        let mut resolved_titles = HashMap::new();
+        let mut resolved_by_id = HashMap::new();
+        let mut resolved_by_norm_pack = HashMap::new();
+        let mut resolved_by_norm = HashMap::new();
 
         if let Some(payload) = payloads.into_iter().next() {
-            let card_rows = payload.rows_as::<CardRow>()?;
+            let card_rows = payload.rows_as::<CardNameRow>()?;
             for row in card_rows {
-                resolved_titles.insert(row.id, row.title);
+                resolved_by_id.insert(row.id.clone(), (row.id.clone(), row.title.clone()));
+                resolved_by_norm_pack.insert(
+                    (row.title_normalized.clone(), row.pack_id.clone()),
+                    (row.id.clone(), row.title.clone()),
+                );
+                resolved_by_norm.insert(row.title_normalized.clone(), (row.id, row.title));
             }
         }
 
         let mut requests = Vec::new();
         let mut not_found = Vec::new();
         for entry in &decklist.cards {
-            if let Some(title) = resolved_titles.get(&entry.card_id) {
+            let matched = resolved_by_id
+                .get(&entry.card_id)
+                .or_else(|| {
+                    entry.pack_id.as_ref().and_then(|pack| {
+                        resolved_by_norm_pack.get(&(entry.card_id.clone(), pack.clone()))
+                    })
+                })
+                .or_else(|| resolved_by_norm.get(&entry.card_id));
+
+            if let Some((real_id, title)) = matched {
                 requests.extend(std::iter::repeat_n(
                     CardRequest {
                         title: title.clone(),
-                        id: entry.card_id.clone(),
+                        id: real_id.clone(),
                         printing: entry.pack_id.clone(),
                         collection: None,
                     },
