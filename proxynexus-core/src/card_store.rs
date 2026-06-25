@@ -1093,6 +1093,12 @@ mod tests {
         db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('netrunner_sure_gamble', 'sure_gamble', 'netrunner', 'Sure Gamble', 'sure_gamble')").await.unwrap();
         db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('netrunner_snare_', 'snare_', 'netrunner', 'Snare!', 'snare_')").await.unwrap();
 
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('pack_core', 'core', 'Core Set', 'netrunner')").await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('pack_none', 'none', 'None', 'netrunner')").await.unwrap();
+
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity) VALUES ('v1', 'netrunner_sure_gamble', 'pack_core', 3)").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity) VALUES ('v2', 'netrunner_snare_', 'pack_none', 3)").await.unwrap();
+
         let mut store = CardStore::new(&mut db, "netrunner".to_string()).unwrap();
 
         let decklist = Decklist {

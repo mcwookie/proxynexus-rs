@@ -185,6 +185,73 @@ impl CatalogProvider for LotrLcgAdapter {
                 }
             }
         }
+        if let Ok(ringsdb_cards) = crate::games::lotrlcg::api::fetch_all_cards().await {
+            for rc in ringsdb_cards {
+                let base_normalized = normalize_title(&rc.name);
+
+                let mut clean_pack_name = rc.pack_name.replace(".English", "");
+                let is_alep = clean_pack_name.starts_with("ALeP - ");
+                if is_alep {
+                    clean_pack_name = clean_pack_name.replace("ALeP - ", "");
+                }
+
+                let display_name = if is_alep {
+                    format!("ALeP - {}", clean_pack_name)
+                } else {
+                    clean_pack_name.clone()
+                };
+
+                let clean_pack_id = normalize_title(&clean_pack_name);
+                let normalized_id = normalize_title(&format!("{}-{}", rc.name, clean_pack_id));
+
+                if seen_pack_names.insert(clean_pack_id.clone()) {
+                    packs.push(Pack {
+                        id: clean_pack_id.clone(),
+                        name: display_name.clone(),
+                        date_release: None,
+                    });
+                } else if is_alep {
+                    if let Some(pack) = packs
+                        .iter_mut()
+                        .find(|p| p.id == clean_pack_id && !p.name.starts_with("ALeP - "))
+                    {
+                        pack.name = display_name;
+                    }
+                }
+
+                let side = match rc.type_code.as_deref() {
+                    Some("hero")
+                    | Some("ally")
+                    | Some("attachment")
+                    | Some("event")
+                    | Some("player-side-quest")
+                    | Some("contract")
+                    | Some("treasure") => "player",
+                    Some("quest") | Some("campaign") | Some("nightmare-setup") | Some("setup") => {
+                        "quest"
+                    }
+                    _ => "encounter",
+                };
+
+                if seen_cards.insert(normalized_id.clone()) {
+                    cards.push(Card {
+                        id: normalized_id.clone(),
+                        title: rc.name,
+                        title_normalized: base_normalized,
+                        side: Some(side.to_string()),
+                    });
+                }
+
+                if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
+                    card_versions.push(CardVersion {
+                        card_id: normalized_id,
+                        pack_id: clean_pack_id,
+                        quantity: rc.quantity.unwrap_or(3) as i64,
+                        position: rc.position.map(|p| p as i64),
+                    });
+                }
+            }
+        }
 
         Ok(Catalog {
             game_id: self.game_id().to_string(),

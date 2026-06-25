@@ -22,18 +22,25 @@ pub async fn fetch_decklist_from_ringsdb(url: &str) -> Result<Decklist> {
 
     let mut cards = Vec::new();
     for (code, quantity) in decklist_response.slots {
-        if let Some(card) = code_to_card.get(&code) {
-            let card_id = crate::card_store::normalize_title(&card.name);
+        let mut lookup_code = code.as_str();
 
+        // MotK hero variants on RingsDB are prepended with "99" and refer to the base ally card
+        if lookup_code.len() == 7 && lookup_code.starts_with("99") {
+            lookup_code = lookup_code.strip_prefix("99").unwrap();
+        }
+
+        if let Some(card) = code_to_card.get(lookup_code) {
             let clean_pack_name = card
                 .pack_name
                 .replace("ALeP - ", "")
                 .replace(".English", "");
-            let pack_id = crate::card_store::normalize_title(&clean_pack_name);
+
+            let card_id = crate::card_store::normalize_title(&card.name);
+            let pack_id = Some(crate::card_store::normalize_title(&clean_pack_name));
 
             cards.push(DecklistEntry {
                 card_id,
-                pack_id: Some(pack_id),
+                pack_id,
                 quantity: quantity as u32,
             });
         }
