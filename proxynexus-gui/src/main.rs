@@ -180,27 +180,43 @@ fn get_db_storage() -> DbStorage {
 #[cfg(target_arch = "wasm32")]
 async fn hydrate_wasm_db(db: &mut DbStorage) -> anyhow::Result<()> {
     use anyhow::{Context, anyhow};
+    use flate2::read::GzDecoder;
     use gloo_net::http::Request;
+    use std::io::Read;
 
-    let url = format!("/init.sql?t={}", js_sys::Date::now());
+    let url = format!("/init.sql.gz?t={}", js_sys::Date::now());
     let response = Request::get(&url)
         .send()
         .await
-        .map_err(|e| anyhow!("Failed to fetch init.sql: {}", e))?;
+        .map_err(|e| anyhow!("Failed to fetch init.sql.gz: {}", e))?;
 
     if !response.ok() {
         return Err(anyhow!(
-            "Failed to fetch init.sql: HTTP {}",
+            "Failed to fetch init.sql.gz: HTTP {}",
             response.status()
         ));
     }
 
-    let sql: String = response
-        .text()
+    let bytes = response
+        .binary()
         .await
-        .map_err(|e| anyhow!("Failed to read init.sql text: {}", e))?;
+        .map_err(|e| anyhow!("Failed to read init.sql.gz binary data: {}", e))?;
 
-    info!("Executing init.sql (size: {} bytes)...", sql.len());
+    info!(
+        "Decompressing init.sql.gz (compressed size: {} bytes)...",
+        bytes.len()
+    );
+
+    let mut decoder = GzDecoder::new(&bytes[..]);
+    let mut sql = String::new();
+    decoder
+        .read_to_string(&mut sql)
+        .map_err(|e| anyhow!("Failed to decompress init.sql: {}", e))?;
+
+    info!(
+        "Executing init.sql (decompressed size: {} bytes)...",
+        sql.len()
+    );
 
     db.execute(&sql)
         .await

@@ -65,7 +65,7 @@ enum Commands {
         list_sets: bool,
     },
     Export {
-        #[arg(short, long, default_value = "init.sql")]
+        #[arg(short, long, default_value = "init.sql.gz")]
         output: PathBuf,
     },
 }

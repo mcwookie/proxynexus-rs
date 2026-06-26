@@ -1,6 +1,8 @@
 use crate::error::{ProxyNexusError, Result};
+use flate2::{Compression, write::GzEncoder};
 use gluesql::FromGlueRow;
 use gluesql::prelude::*;
+use std::io::Write;
 
 #[derive(FromGlueRow)]
 pub struct IdRow {
@@ -373,7 +375,9 @@ impl DbStorage {
             }
         }
 
-        std::fs::write(path, sql)?;
+        let file = std::fs::File::create(path)?;
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        encoder.write_all(sql.as_bytes())?;
         Ok(())
     }
 }

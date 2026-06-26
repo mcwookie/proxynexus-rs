@@ -16,6 +16,7 @@ web-time = "1.1"
 fuzzy-matcher = "0.3.7"
 anyhow = "1.0.102"
 async-lock = "3.4.2"
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 
 [features]
 default = ["desktop"]
