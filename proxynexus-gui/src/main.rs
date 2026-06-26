@@ -417,6 +417,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let mut open_variant_selector = use_signal(|| None::<VariantSelectorState>);
     let mut is_overrides_reset_pending = use_signal(|| false);
     let mut is_about_open = use_signal(|| false);
+    let mut show_copy_toast = use_signal(|| false);
     let mut print_layout_info_pos = use_signal(|| None::<(f64, f64, f64)>);
     let mut upscale_info_pos = use_signal(|| None::<(f64, f64, f64)>);
 
@@ -680,6 +681,11 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                                             };
 
                                             copy_selection_to_clipboard(&game_id, &printings_clone);
+                                            show_copy_toast.set(true);
+                                            spawn(async move {
+                                                sleep(2000).await;
+                                                show_copy_toast.set(false);
+                                            });
                                         }
                                     },
                                     title: "Copy Selection URL",
@@ -767,6 +773,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 UpscaleInfo {
                     pos,
                     on_close: move |_| upscale_info_pos.set(None),
+                }
+            }
+
+            if show_copy_toast() {
+                div {
+                    class: "fixed top-4 right-4 bg-green-500/90 text-white px-4 py-2 rounded-md shadow-lg z-[100] transition-all duration-300 pointer-events-none font-medium backdrop-blur-sm",
+                    "Link copied to clipboard!"
                 }
             }
         }
