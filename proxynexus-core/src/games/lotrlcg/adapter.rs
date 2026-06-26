@@ -94,6 +94,7 @@ impl CatalogProvider for LotrLcgAdapter {
         let mut card_versions = Vec::new();
         let mut seen_cards = HashSet::new();
         let mut seen_versions = HashSet::new();
+        let mut provided_pack_positions = HashSet::new();
 
         for c in all_hob_cards {
             let base_normalized = normalize_title(&c.title);
@@ -118,6 +119,7 @@ impl CatalogProvider for LotrLcgAdapter {
             }
 
             if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
+                provided_pack_positions.insert((clean_pack_id.clone(), c.number));
                 card_versions.push(CardVersion {
                     card_id: normalized_id,
                     pack_id: clean_pack_id,
@@ -176,6 +178,9 @@ impl CatalogProvider for LotrLcgAdapter {
                 }
 
                 if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
+                    if let Some(pos) = rc.position {
+                        provided_pack_positions.insert((clean_pack_id.clone(), pos as i64));
+                    }
                     card_versions.push(CardVersion {
                         card_id: normalized_id,
                         pack_id: clean_pack_id,
@@ -232,6 +237,12 @@ impl CatalogProvider for LotrLcgAdapter {
                     _ => "encounter",
                 };
 
+                if rc.position.is_some_and(|pos| {
+                    provided_pack_positions.contains(&(clean_pack_id.clone(), pos as i64))
+                }) {
+                    continue;
+                }
+
                 if seen_cards.insert(normalized_id.clone()) {
                     cards.push(Card {
                         id: normalized_id.clone(),
@@ -242,6 +253,9 @@ impl CatalogProvider for LotrLcgAdapter {
                 }
 
                 if seen_versions.insert((normalized_id.clone(), clean_pack_id.clone())) {
+                    if let Some(pos) = rc.position {
+                        provided_pack_positions.insert((clean_pack_id.clone(), pos as i64));
+                    }
                     card_versions.push(CardVersion {
                         card_id: normalized_id,
                         pack_id: clean_pack_id,
