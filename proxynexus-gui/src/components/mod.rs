@@ -15,6 +15,14 @@ pub(crate) fn build_image_url(image_key: &str) -> String {
 
     #[cfg(feature = "web")]
     {
-        format!("https://collections.proxynexus.net/{}", image_key)
+        // Override at build time with PROXYNEXUS_COLLECTIONS_URL to point at
+        // a self-hosted bucket (e.g. MinIO) instead of the upstream
+        // maintainer's Cloudflare R2 bucket. Falls back to the original
+        // default so upstream behavior is unchanged if unset.
+        const BASE_URL: &str = match option_env!("PROXYNEXUS_COLLECTIONS_URL") {
+            Some(url) => url,
+            None => "https://collections.proxynexus.net",
+        };
+        format!("{}/{}", BASE_URL, image_key)
     }
 }

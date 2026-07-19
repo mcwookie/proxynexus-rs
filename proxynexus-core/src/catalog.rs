@@ -4,6 +4,7 @@ use crate::games::GameAdapterInfo;
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
+use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use async_trait::async_trait;
 use gluesql::FromGlueRow;
@@ -60,6 +61,7 @@ impl<'a> CatalogManager<'a> {
             Box::new(L5rAdapter::new()),
             Box::new(AgotAdapter::new()),
             Box::new(LotrLcgAdapter::new()),
+            Box::new(MarvelChampionsAdapter::new()),
         ];
 
         Self { db, adapters }
