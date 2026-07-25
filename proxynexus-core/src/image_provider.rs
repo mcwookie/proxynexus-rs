@@ -36,9 +36,23 @@ impl ImageProvider for LocalImageProvider {
 
 pub struct RemoteImageProvider;
 
+// Override at build time with PROXYNEXUS_COLLECTIONS_URL to point at a
+// self-hosted bucket (e.g. MinIO) instead of the upstream maintainer's
+// Cloudflare R2 bucket. Falls back to the original default so upstream
+// behavior is unchanged if unset. Mirrors proxynexus-gui's
+// components::build_image_url, which already did this for preview
+// thumbnails -- this fetcher (used for PDF/MPC generation) needs the same
+// override, otherwise generation silently fails for every self-hosted
+// collection (every image fetch 404s against the upstream bucket, and the
+// resulting error is never surfaced to the UI).
+const COLLECTIONS_BASE_URL: &str = match option_env!("PROXYNEXUS_COLLECTIONS_URL") {
+    Some(url) => url,
+    None => "https://collections.proxynexus.net",
+};
+
 impl ImageProvider for RemoteImageProvider {
     async fn get_image_bytes(&self, key: &str) -> Result<Vec<u8>> {
-        let url = format!("https://collections.proxynexus.net/{}", key);
+        let url = format!("{}/{}", COLLECTIONS_BASE_URL, key);
 
         #[cfg(not(target_arch = "wasm32"))]
         {

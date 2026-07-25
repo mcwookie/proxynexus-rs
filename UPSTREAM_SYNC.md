@@ -26,10 +26,13 @@ git remote -v   # should show both origin (your fork) and upstream
    - `proxynexus-core/src/games/mod.rs`
    - `proxynexus-core/src/catalog.rs`
    - `proxynexus-gui/src/components/mod.rs`
+   - `proxynexus-core/src/image_provider.rs`
 
-   These three are exactly the files the Marvel Champions and Arkham
+   These four are exactly the files the Marvel Champions and Arkham
    Horror LCG work also touches (game registration lists, and the
-   `PROXYNEXUS_COLLECTIONS_URL` patch for self-hosted Docker deployment),
+   `PROXYNEXUS_COLLECTIONS_URL` patch for self-hosted Docker deployment
+   -- which needs the override applied in *both* `components/mod.rs`
+   and `image_provider.rs`, see the "If conflicts appear" note below),
    so that's where conflicts are most likely to show up.
 
 3. **Merge:**
@@ -44,11 +47,16 @@ git remote -v   # should show both origin (your fork) and upstream
      declaration or adapter registration). Keep both your
      `marvel_champions`/`ahlcg` lines and whatever upstream added, then
      `git add <file>`.
-   - In `proxynexus-gui/src/components/mod.rs`: means upstream touched
-     `build_image_url` too. Manually re-merge your
-     `PROXYNEXUS_COLLECTIONS_URL` override logic with whatever upstream
-     changed — review this one carefully, it's the file behind the
-     self-hosted Docker web app setup.
+   - In `proxynexus-gui/src/components/mod.rs` or
+     `proxynexus-core/src/image_provider.rs`: means upstream touched
+     `build_image_url` or `RemoteImageProvider` respectively. Manually
+     re-merge your `PROXYNEXUS_COLLECTIONS_URL` override logic with
+     whatever upstream changed — review carefully, and check **both**
+     files regardless of which one conflicted: they need the identical
+     override pattern, and having it in only one of them silently breaks
+     either preview thumbnails or PDF/MPC generation depending on which
+     one's missing (confirmed the hard way — see `SETUP.md`'s
+     troubleshooting section, "Clicking Generate does nothing").
    - Finish with `git commit` once all conflicts are resolved.
 
 5. **Push the merge back to your fork:**
