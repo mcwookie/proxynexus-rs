@@ -27,10 +27,10 @@ git remote -v   # should show both origin (your fork) and upstream
    - `proxynexus-core/src/catalog.rs`
    - `proxynexus-gui/src/components/mod.rs`
 
-   These three are exactly the files the Marvel Champions work also
-   touches (game registration lists, and the `PROXYNEXUS_COLLECTIONS_URL`
-   patch for self-hosted Docker deployment), so that's where conflicts
-   are most likely to show up.
+   These three are exactly the files the Marvel Champions and Arkham
+   Horror LCG work also touches (game registration lists, and the
+   `PROXYNEXUS_COLLECTIONS_URL` patch for self-hosted Docker deployment),
+   so that's where conflicts are most likely to show up.
 
 3. **Merge:**
    ```bash
@@ -42,7 +42,7 @@ git remote -v   # should show both origin (your fork) and upstream
    - In `games/mod.rs` or `catalog.rs`: almost always just both sides
      adding a new line to the same list (e.g. a new game's `mod`
      declaration or adapter registration). Keep both your
-     `marvel_champions` line and whatever upstream added, then
+     `marvel_champions`/`ahlcg` lines and whatever upstream added, then
      `git add <file>`.
    - In `proxynexus-gui/src/components/mod.rs`: means upstream touched
      `build_image_url` too. Manually re-merge your
