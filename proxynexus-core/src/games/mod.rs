@@ -1,4 +1,5 @@
 pub mod agot;
+pub mod ahlcg;
 pub mod l5r;
 pub mod lotrlcg;
 pub mod marvel_champions;
@@ -6,6 +7,7 @@ pub mod netrunner;
 use crate::card_source::DecklistProvider;
 use crate::error::{ProxyNexusError, Result};
 use crate::games::agot::adapter::AgotAdapter;
+use crate::games::ahlcg::adapter::AhlcgAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
@@ -28,6 +30,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(AgotAdapter::new()),
         Box::new(LotrLcgAdapter::new()),
         Box::new(MarvelChampionsAdapter::new()),
+        Box::new(AhlcgAdapter::new()),
     ];
 
     for adapter in adapters {
@@ -44,6 +47,7 @@ pub fn get_decklist_adapter(game_id: &str) -> Option<Box<dyn DecklistProvider>> 
         "l5r" => Some(Box::new(L5rAdapter::new())),
         "agot" => Some(Box::new(AgotAdapter::new())),
         "lotrlcg" => Some(Box::new(LotrLcgAdapter::new())),
+        "ahlcg" => Some(Box::new(AhlcgAdapter::new())),
         _ => None,
     }
 }
@@ -52,6 +56,7 @@ pub fn get_card_back_adapter(game_id: &str) -> Option<Box<dyn CardBackProvider>>
     match game_id {
         "netrunner" => Some(Box::new(NetrunnerAdapter::new())),
         "l5r" => Some(Box::new(L5rAdapter::new())),
+        "ahlcg" => Some(Box::new(AhlcgAdapter::new())),
         _ => None,
     }
 }
