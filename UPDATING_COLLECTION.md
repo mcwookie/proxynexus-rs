@@ -35,7 +35,10 @@ rebuild the .pnx  ->  remove the old collection  ->  add the new one
    naming convention documented in the CLI's README (Image File Naming
    Convention section) —
    `card_id` and `pack_id` must exactly match the official API's codes
-   (MarvelCDB or ArkhamDB, whichever game this is).
+   (MarvelCDB or ArkhamDB, whichever game this is). **The `~back` part
+   only applies to Arkham Horror LCG** — see "Double-sided cards: two
+   different conventions" below before naming any double-sided card's
+   files.
 
    - **Marvel Champions**: a companion Python script
      (`rename_marvel_champions.py`, kept outside this repo) fuzzy-matches
@@ -122,7 +125,50 @@ Simpler -- you're not touching the catalog at all, just the image files.
 
 4. Update the Docker web app too if you're using it (same step 6 as above).
 
+## Double-sided cards: two different conventions
+
+Marvel Champions and Arkham Horror LCG represent a double-sided card
+differently at the source API, and the image naming has to follow suit —
+mixing these up either breaks the catalog match or (worse) silently
+produces the wrong result:
+
+- **Arkham Horror LCG (ArkhamDB)**: a double-sided card (most
+  investigators, acts, agendas) has **one** card code with separate
+  `imagesrc`/`backimagesrc` fields. Name the files
+  `{card_id}@{pack_id}.jpg` (front) and `{card_id}@{pack_id}~back.jpg`
+  (back) -- the `~back` part convention exists for exactly this case.
+
+- **Marvel Champions (MarvelCDB)**: a double-sided card (hero/alter-ego
+  pairs) gets **two separate card codes** from MarvelCDB itself, e.g.
+  `01001a` (Spider-Man) and `01001b` (Peter Parker) -- confirmed via
+  MarvelCDB's own `linked_to_code`/`linked_card` fields, and the catalog
+  treats them as two fully independent cards (`query --set-name "Core
+  Set" -g marvel_champions` lists "Spider-Man" and "Peter Parker" as
+  separate rows). **Never use `~back` here.** Each side just needs its
+  own plain front image: `01001a@core.jpg` and `01001b@core.jpg`. There
+  is no catalog entry for the bare code `01001`, so a file named
+  `01001@core~back.jpg` would fail to match any official printing at
+  all -- the `a`/`b` suffix is part of the real card ID, not a naming
+  mistake to "fix" into a `~back` part.
+
 ## Known pitfalls (hit for real while adding Arkham Horror LCG)
+
+- **A buggy TTS export script can tag every card with a spurious
+  `~back` file**, not just genuinely double-sided ones. If your source
+  images come from a Tabletop Simulator save exporter, check that it
+  only writes a `~back` file when the deck's `UniqueBack` flag is true
+  -- if it writes one unconditionally (even a shared, generic
+  player/encounter card back for single-sided cards), every single-sided
+  card will incorrectly show a card back in the app. Symptom: an
+  implausibly high fraction of `~back` files relative to genuinely
+  double-sided cards (e.g. ~50% in a collection where only ~25% of cards
+  are actually double-sided). To retroactively clean up a collection
+  already exported this way, cross-reference each `~back` file's
+  `(card_id, pack_id)` against the game API's own `double_sided` field
+  (ArkhamDB) rather than relying on image-hash deduplication alone --
+  the "generic" back image isn't always byte-identical across packs
+  (different scan batches/resolutions), so hash-based dedup under-counts
+  the spurious files.
 
 - **The bulk `/api/public/cards/` endpoint is unreliable for both games**
   -- confirmed for MarvelCDB (drops some encounter cards) and, worse, for
