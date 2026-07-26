@@ -167,6 +167,47 @@ produces the wrong result:
   all -- the `a`/`b` suffix is part of the real card ID, not a naming
   mistake to "fix" into a `~back` part.
 
+## The same card showing up more than once within one pack/set
+
+Not a bug -- confirmed by tracing the actual query (`SetName`'s
+`get_card_requests_from_set_name` in `card_store.rs`) and the raw
+catalog data behind it, after "why does Tommy Muldoon's set show M1911
+and Police Dog twice?" turned out to have a real, verifiable answer
+rather than being pipeline damage. That query joins
+`cards`/`card_versions`/`packs` strictly on `pack.name == <requested
+set>` and repeats each resulting row by its `quantity` field -- it does
+**no** deduplication by title. Two different, unrelated reasons a card
+can end up appearing more than once for the same reason a human would
+expect only one:
+
+- **Ordinary quantity > 1** -- one `card_id`, one `card_versions` row for
+  that pack, `quantity` field is 2 (or more). This is the common case
+  (e.g. 2x Iron Sights, 4x Physical Fitness) -- no different from any
+  deck legitimately containing multiple copies of the same card.
+- **Two separate official card codes under the same pack** -- rarer, but
+  real: e.g. Tommy Muldoon's own starter-deck pack (`tom`) has *two*
+  distinct ArkhamDB codes both named "M1911" (`60155` and `60171`, each
+  with its own `quantity`), and likewise for "Police Dog". ArkhamDB
+  apparently assigns sequential codes per physical card slot for these
+  small investigator-starter products rather than one code with a higher
+  quantity. Confirmed via the exported catalog directly:
+  ```bash
+  python3 -c "
+  import gzip, re
+  content = gzip.open('data/init.sql', 'rt').read()
+  ids = re.findall(r\"\('(ahlcg_[^']*)', '[^']*', 'ahlcg', 'M1911',\", content)
+  print(ids)"
+  ```
+  Both mechanisms are correct, official-data behavior, not something to
+  "fix" -- generating the set really does produce that many cards, and a
+  real physical copy of the product has that many too.
+
+This is a distinct situation from "Double-sided cards" above (front/back
+of one physical card) and from a genuinely reprinted investigator
+appearing under a *different* pack (Carolyn Fern in both `car` and `tcu`
+-- see the query's `# also:` annotation, which only shows up for that
+cross-pack case, not the same-pack duplicate-code case above).
+
 ## Known pitfalls (hit for real while adding Arkham Horror LCG)
 
 - **A buggy TTS export script can tag every card with a spurious
@@ -198,13 +239,19 @@ produces the wrong result:
   way but its `~back` sibling survives (or vice versa), `collection add`
   will fail per-card with `"Validation error: Card 'X' (Y) has auxiliary
   parts but no 'front' image."` -- and it'll do this one card at a time
-  as you fix each one, not all at once. Before building, check for
-  stragglers:
+  as you fix each one, not all at once. If the front *does* survive
+  (just the back is `.webp`) there's no error at all -- the card silently
+  builds as single-sided, missing a back it should have had. Confirmed
+  recurring: an initial cleanup found and fixed ~150 stray `.webp` files,
+  and a later scan of the same (by-then-much-larger) collection turned up
+  25 more -- new content merged in later re-introduces the problem, it's
+  not a one-time fix. Re-scan the **whole** collection folder before
+  every `collection build`, not just newly-added files:
   ```bash
-  find ./renamed -type f ! -iname "*.jpg" ! -iname "*.jpeg" ! -iname "*.png"
+  find /path/to/collection -type f ! -iname "*.jpg" ! -iname "*.jpeg" ! -iname "*.png" ! -iname "manifest.csv"
   ```
-  and convert them (e.g. `convert card.webp card.jpg`) before running
-  `collection build`.
+  and convert any hits (e.g. `convert card.webp card.jpg`) before
+  building.
 
 - **A failed `collection add` can still leave a "ghost" collection
   behind.** The `INSERT INTO collections` row write happens *before* the
