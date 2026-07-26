@@ -54,10 +54,26 @@ rebuild the .pnx  ->  remove the old collection  ->  add the new one
      ```bash
      python3 rename_marvel_champions.py --source "path/to/new-expansion-folder" --output ./renamed --review match_log.csv
      ```
-   - **Arkham Horror LCG**: no equivalent matching script exists yet.
-     Images need to already be named per the convention above using
-     ArkhamDB's card codes (visible in each card's URL, e.g.
-     `arkhamdb.com/card/01001`) before `collection build`.
+   - **Arkham Horror LCG**: not a fuzzy-matcher for scans -- instead,
+     `lcg_tts_processor.py` (kept outside this repo, in
+     `lcg-utils/lcg-tts-processor/`) extracts card images directly from
+     Tabletop Simulator save data (the
+     [SCED](https://github.com/Chr1Z93/SCED) mod for player cards,
+     [SCED-downloads](https://github.com/Chr1Z93/SCED-downloads) for
+     encounter cards) and identifies each card against ArkhamDB itself,
+     writing output already in the naming convention above via its
+     `--naming dbid` flag:
+     ```bash
+     python3 lcg_tts_processor.py SAVEFILE.json -o ./renamed --game arkham --naming dbid
+     ```
+     Test with `--limit 20` before committing to a full run. See that
+     script's own `README.md`/`PROJECT_CONTEXT.md` for the input file
+     details (which save to point it at, how to compose one from
+     SCED-downloads' decomposed format) and a running log of real bugs
+     hit and fixed -- several of which produced exactly the kind of
+     silent, hard-to-spot-in-the-output problems this "Known pitfalls"
+     section is about (a bulk-vs-per-pack API completeness question, and
+     minicard variants silently winning over the real card).
 
 3. **Rebuild the `.pnx`:**
    ```bash
@@ -218,6 +234,20 @@ code itself changed) the updated `proxynexus-rs/` source tree to the
 host, then run the Docker commands there. See `SETUP.md`'s "Important:
 export must run on the machine that has the collection" section for the
 full detail.
+
+**Check whether "transfer" is even a manual step first.** If
+`proxynexus-package/` lives under a network mount (NFS/SMB/etc.) that's
+mounted identically on both the machine you build on and the Docker
+host, there's nothing to copy -- writes to `data/init.sql`/
+`data/collections/` are already visible on the Docker host the moment
+they happen. Confirm with `mount | grep <path>` (or compare `df`'s
+"Filesystem" column) on both machines -- same server + same export path
+means it's one shared filesystem, not two copies. `~/.proxynexus`
+(the CLI's own database/collection cache) is a different story: it
+lives under the home directory, not typically on a shared mount, so
+it's genuinely separate per machine even when `proxynexus-package/`
+itself is shared -- which is exactly why `collection add`/`export`
+still have to run on whichever machine actually holds the images.
 
 ## Why the filename matters
 
