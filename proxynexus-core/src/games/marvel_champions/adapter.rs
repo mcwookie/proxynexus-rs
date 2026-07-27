@@ -53,7 +53,7 @@ impl CatalogProvider for MarvelChampionsAdapter {
             .map(|pack| Pack {
                 id: pack.code,
                 name: pack.name,
-                date_release: pack.date_release,
+                date_release: pack.available,
             })
             .collect();
 

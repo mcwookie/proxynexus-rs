@@ -357,8 +357,18 @@ impl<'a> CardStore<'a> {
             }
         }
 
+        // Sort by (date_release, name) rather than date_release alone --
+        // packs sharing the same release date (confirmed real: e.g. five
+        // Arkham Horror LCG investigator starter decks all released the
+        // same day) would otherwise tie, and since `pack_data` is a
+        // HashMap, ties fell back to HashMap iteration order -- which
+        // Rust deliberately randomizes per-process, so the same tied
+        // packs could appear in a different relative order every time the
+        // app restarts. Adding `name` as a secondary key makes the result
+        // fully deterministic regardless of HashMap iteration order, as
+        // long as no two packs share both the same date and name.
         let mut sorted_packs: Vec<_> = pack_data.into_values().collect();
-        sorted_packs.sort_by(|a, b| a.date_release.cmp(&b.date_release));
+        sorted_packs.sort_by(|a, b| (&a.date_release, &a.name).cmp(&(&b.date_release, &b.name)));
 
         let mut results = Vec::new();
 

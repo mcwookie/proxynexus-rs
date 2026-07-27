@@ -17,7 +17,15 @@ pub struct McdbPack {
     pub code: String,
     pub name: String,
     pub position: i64,
-    pub date_release: Option<String>,
+    /// MarvelCDB's release-date field is named "available", not
+    /// "date_release" -- confirmed via the raw API response (e.g. Core
+    /// Set: `"available": "2019-11-01"`, no "date_release" key at all).
+    /// A field literally named `date_release` here would silently
+    /// deserialize to `None` for every pack, since serde matches JSON
+    /// keys by field name and that key doesn't exist -- which is exactly
+    /// what happened before this was renamed, making the Set dropdown's
+    /// date-based sort a no-op for every Marvel Champions pack.
+    pub available: Option<String>,
     pub size: Option<i64>,
 }
 
