@@ -30,10 +30,17 @@ pub fn PreviewGrid(props: PreviewGridProps) -> Element {
             class: "flex flex-wrap gap-4",
             for (printing, base_printing) in printings.into_iter().zip(base_printings.into_iter()) {
                 {
+                    // identity/occurrence tracking is keyed by card_id, not
+                    // title -- two different official cards can share a
+                    // normalized title (e.g. a hero and its alter-ego), and
+                    // keying by title alone let clicking one slot's variant
+                    // picker affect an unrelated card's slot. `title_normalized`
+                    // is still used below just to look up whether *any*
+                    // swappable variants exist for this card's title family.
                     let title_normalized = proxynexus_core::card_store::normalize_title(&printing.card_title);
-                    let occurrence = *occurrence_tracker.entry(title_normalized.clone()).or_insert(0);
-                    *occurrence_tracker.get_mut(&title_normalized).unwrap() += 1;
-                    let identity = (title_normalized.clone(), occurrence);
+                    let occurrence = *occurrence_tracker.entry(printing.card_id.clone()).or_insert(0);
+                    *occurrence_tracker.get_mut(&printing.card_id).unwrap() += 1;
+                    let identity = (printing.card_id.clone(), occurrence);
 
                     let is_open = if let Some(state) = open_variant_selector.read().as_ref() {
                         state.id == identity

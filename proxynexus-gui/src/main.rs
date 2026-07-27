@@ -513,16 +513,24 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         }
     });
 
-    let printings_by_title = use_memo(move || {
+    // Grouped by card_id, not title -- two different official cards can
+    // share a normalized title (e.g. a Marvel Champions hero and its
+    // alter-ego, which the game doesn't give distinct names to). Keying
+    // this by title alone let clicking one slot's variant picker overwrite
+    // an unrelated card's slot ("Apply to all N copies" counting sibling
+    // cards as if they were duplicate copies of the same card, and
+    // single-slot overrides landing on the wrong occurrence). `available`
+    // (the picker's candidate list) is still looked up by title below --
+    // that's what lets genuinely reprinted cards (same design, new
+    // official card_id in a later pack) still offer each other as
+    // swappable variants.
+    let printings_by_id = use_memo(move || {
         let res = ordered_printings.read();
         let (_base, printings, available, _not_found) = res.as_ref()?.as_ref().ok()?;
 
         let mut grouped = HashMap::<String, Vec<Printing>>::new();
         for p in printings {
-            grouped
-                .entry(normalize_title(&p.card_title))
-                .or_default()
-                .push(p.clone());
+            grouped.entry(p.card_id.clone()).or_default().push(p.clone());
         }
         Some((grouped, available.clone()))
     });
@@ -534,12 +542,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
         let mob_left = x;
         let mob_top = y + h + 8.0;
 
-        if let Some((grouped, available)) = printings_by_title.read().as_ref() {
-            let title_norm = state.id.0.clone();
+        if let Some((grouped, available)) = printings_by_id.read().as_ref() {
+            let card_id = state.id.0.clone();
             let occurrence = state.id.1;
 
-            if let Some(group) = grouped.get(&title_norm) {
+            if let Some(group) = grouped.get(&card_id) {
                 if let Some(printing) = group.get(occurrence) {
+                    let title_norm = normalize_title(&printing.card_title);
                     if let Some(variants) = available.get(&title_norm) {
                         let total_copies = group.len();
 
@@ -554,13 +563,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                                     total_copies,
                                     on_close: move |_| open_variant_selector.set(None),
                                     on_override: move |(apply_to_all, variant_str): (bool, String)| {
-                                        let normalized = title_norm.clone();
+                                        let cid = card_id.clone();
                                         if apply_to_all {
-                                            global_overrides.write().insert(normalized.clone(), variant_str);
-                                            index_overrides.write().retain(|(t, _), _| t != &normalized);
+                                            global_overrides.write().insert(cid.clone(), variant_str);
+                                            index_overrides.write().retain(|(c, _), _| c != &cid);
                                             open_variant_selector.set(None);
                                         } else {
-                                            index_overrides.write().insert((normalized, occurrence), variant_str);
+                                            index_overrides.write().insert((cid, occurrence), variant_str);
                                         }
                                     }
                                 }

@@ -77,16 +77,27 @@ pub fn apply_variant_overrides(
     global_overrides: &HashMap<String, String>,
     index_overrides: &HashMap<(String, usize), String>,
 ) -> Vec<Printing> {
+    // Occurrence tracking and override lookups are keyed by `card_id`, not
+    // title -- two different official cards can share a normalized title
+    // (e.g. a Marvel Champions hero and its alter-ego, which the game
+    // itself doesn't give distinct names, or other cards that coincidentally
+    // share a name). Keying by title alone meant "Apply to all N copies"
+    // for one card could silently also overwrite an unrelated card's slot,
+    // and a single-slot override could land on the wrong occurrence
+    // entirely. `available` (the variant-picker's candidate list) stays
+    // title-keyed on purpose -- that's what lets genuinely reprinted cards
+    // (same design, new official card_id in a later pack) still offer each
+    // other as swappable variants.
     let mut occurrence_map = HashMap::<String, usize>::new();
     let mut result = Vec::with_capacity(base.len());
 
     for p in base {
         let title_norm = normalize_title(&p.card_title);
-        let occurrence = occurrence_map.entry(title_norm.clone()).or_insert(0);
+        let occurrence = occurrence_map.entry(p.card_id.clone()).or_insert(0);
 
         let override_str = index_overrides
-            .get(&(title_norm.clone(), *occurrence))
-            .or_else(|| global_overrides.get(&title_norm));
+            .get(&(p.card_id.clone(), *occurrence))
+            .or_else(|| global_overrides.get(&p.card_id));
 
         let mut resolved = p.clone();
         if let Some(over_str) = override_str
@@ -297,5 +308,41 @@ mod tests {
         // index 1 uses index-specific override, which takes precedence
         assert_eq!(result[1].variant, Some("promo".to_string()));
         assert_eq!(result[1].collection, "special");
+    }
+
+    #[test]
+    fn test_apply_variant_overrides_does_not_bleed_across_different_card_ids_sharing_a_title() {
+        // Reproduces the real "Vision" bug: two different official cards
+        // (a hero and its alter-ego) sharing an identical title (both
+        // "Sure Gamble" here, since mock_printing hardcodes card_title).
+        // A global ("Apply to all N copies") override for one card_id
+        // must not bleed into the other, even though both share a title
+        // and both would previously have been keyed identically by it.
+        let hero = mock_printing("vis_hero", true, None, "ffg-en", Some("vision"));
+        let alter_ego = mock_printing("vis_alter", true, None, "ffg-en", Some("vision"));
+        let hero_alt = mock_printing("vis_hero", false, Some("alt1"), "standard", None);
+
+        let base = vec![hero.clone(), alter_ego.clone()];
+
+        let mut available = HashMap::new();
+        available.insert(
+            "sure_gamble".into(),
+            vec![hero.clone(), alter_ego.clone(), hero_alt.clone()],
+        );
+
+        let mut global_overrides = HashMap::new();
+        global_overrides.insert("vis_hero".into(), "alt1:standard".into());
+
+        let result = apply_variant_overrides(&base, &available, &global_overrides, &HashMap::new());
+        assert_eq!(result.len(), 2);
+
+        // hero's override applies to hero...
+        assert_eq!(result[0].card_id, "vis_hero");
+        assert_eq!(result[0].variant, Some("alt1".to_string()));
+
+        // ...but must NOT bleed into alter_ego, which shares hero's title
+        // but is a different card_id and received no override of its own.
+        assert_eq!(result[1].card_id, "vis_alter");
+        assert_eq!(result[1].variant, None);
     }
 }

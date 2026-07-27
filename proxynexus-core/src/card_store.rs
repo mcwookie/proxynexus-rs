@@ -695,13 +695,27 @@ impl<'a> CardStore<'a> {
     pub fn select_printing(request: &CardRequest, printings: &[Printing]) -> Result<Printing> {
         let mut candidates: Vec<&Printing> = printings.iter().collect();
 
-        // Ensure the best match (fewest misses) is at index 0
+        // Ensure the best match (fewest misses) is at index 0.
+        //
+        // `printings` is looked up by *title*, not by the request's specific
+        // card id -- so it can contain printings from other, unrelated cards
+        // that just happen to share a normalized title (confirmed real: all
+        // 7 MarvelCDB cards literally named "Vision" -- an ally, a hero, its
+        // alter-ego, and 4 unrelated villain-form "leader" cards -- share one
+        // title bucket). Without prioritizing an exact card_id match first,
+        // this could silently resolve a request for one specific card (e.g.
+        // the alter-ego) to a completely different card's printing (e.g. the
+        // hero's, or the unrelated ally's) whenever that other printing
+        // sorted better on official-ness/date. `id_miss` must be checked
+        // before any of that.
         candidates.sort_by_key(|p| {
+            let id_miss = p.card_id != request.id;
             let printing_miss = request.printing.is_some()
                 && request.printing != p.pack_id
                 && request.printing != p.variant;
 
             (
+                id_miss,
                 printing_miss,
                 request.collection.is_some() && request.collection.as_ref() != Some(&p.collection),
                 !p.is_official,
@@ -858,6 +872,65 @@ mod tests {
         let result = CardStore::select_printing(&req, &available).unwrap();
         assert_eq!(result.collection, "ffg-en");
         assert_eq!(result.pack_id, Some("core".to_string()));
+    }
+
+    #[test]
+    fn test_select_printing_prefers_requested_card_id_over_title_siblings() {
+        // Reproduces the real "Vision" bug: a Marvel Champions hero and its
+        // alter-ego share an identical title (both "Mocked Printing" here,
+        // since mock_printing hardcodes card_title), so they land in the
+        // same title-keyed "available printings" bucket. hero and
+        // alter_ego are identical on every other sort criterion
+        // (is_official, date_release), so without prioritizing an exact
+        // card_id match, a stable sort would just preserve input order --
+        // meaning a request for the alter-ego could silently resolve to
+        // the hero's printing instead. This test fails without the
+        // `id_miss` sort key.
+        let hero = mock_printing(
+            "vis_hero",
+            true,
+            None,
+            "ffg-en",
+            Some("vision"),
+            Some("2020-01-01"),
+        );
+        let alter_ego = mock_printing(
+            "vis_alter",
+            true,
+            None,
+            "ffg-en",
+            Some("vision"),
+            Some("2020-01-01"),
+        );
+        // hero deliberately listed first, so a naive stable sort with no
+        // id-awareness would return it for either request.
+        let bucket = vec![hero.clone(), alter_ego.clone()];
+
+        let req_hero = CardRequest {
+            title: "Vision".into(),
+            id: "vis_hero".into(),
+            printing: None,
+            collection: None,
+        };
+        let req_alter_ego = CardRequest {
+            title: "Vision".into(),
+            id: "vis_alter".into(),
+            printing: None,
+            collection: None,
+        };
+
+        assert_eq!(
+            CardStore::select_printing(&req_hero, &bucket)
+                .unwrap()
+                .card_id,
+            "vis_hero"
+        );
+        assert_eq!(
+            CardStore::select_printing(&req_alter_ego, &bucket)
+                .unwrap()
+                .card_id,
+            "vis_alter"
+        );
     }
 
     #[test]
