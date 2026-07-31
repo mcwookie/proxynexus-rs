@@ -225,6 +225,7 @@ mod tests {
             side: "runner".into(),
             pack_id: pack.map(|p| p.to_string()),
             date_release: None,
+            back_type: None,
         }
     }
 

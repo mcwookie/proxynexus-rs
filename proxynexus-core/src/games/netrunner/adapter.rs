@@ -64,6 +64,7 @@ impl CatalogProvider for NetrunnerAdapter {
                 title: card.attributes.title.clone(),
                 title_normalized: normalize_title(&card.attributes.title),
                 side: Some(card.attributes.side_id),
+                back_type: None,
             })
             .collect();
 

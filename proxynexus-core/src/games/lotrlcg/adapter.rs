@@ -115,6 +115,11 @@ impl CatalogProvider for LotrLcgAdapter {
                     title,
                     title_normalized: base_normalized,
                     side: Some(side.to_string()),
+                    // Not classified yet -- LotR LCG encounter cards
+                    // aren't currently available through this adapter's
+                    // data source anyway (RingsDB's public API doesn't
+                    // expose encounter-side cards at all).
+                    back_type: None,
                 });
             }
 
@@ -174,6 +179,7 @@ impl CatalogProvider for LotrLcgAdapter {
                         title: rc.name,
                         title_normalized: base_normalized,
                         side: Some(side.to_string()),
+                        back_type: None,
                     });
                 }
 
@@ -249,6 +255,7 @@ impl CatalogProvider for LotrLcgAdapter {
                         title: rc.name,
                         title_normalized: base_normalized,
                         side: Some(side.to_string()),
+                        back_type: None,
                     });
                 }
 

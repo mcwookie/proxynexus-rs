@@ -51,6 +51,7 @@ struct AvailablePrintingRow {
     pack_id: Option<String>,
     has_bleed: bool,
     date_release: Option<String>,
+    back_type: Option<String>,
 }
 
 #[derive(Hash, PartialEq, Eq, Debug)]
@@ -542,7 +543,8 @@ impl<'a> CardStore<'a> {
                 c.side,
                 pks.api_id as pack_id,
                 p.has_bleed,
-                pks.date_release
+                pks.date_release,
+                c.back_type
              FROM printings p
              JOIN cards c ON p.card_id = c.id
              JOIN collections col ON p.collection_id = col.id
@@ -608,6 +610,7 @@ impl<'a> CardStore<'a> {
             let is_official = first_row.is_official;
             let side = first_row.side.clone();
             let date_release = first_row.date_release.clone();
+            let back_type = first_row.back_type.clone();
 
             for row in rows {
                 if row.part == "front" {
@@ -646,6 +649,7 @@ impl<'a> CardStore<'a> {
                 side,
                 pack_id: key.pack_id,
                 date_release,
+                back_type,
             };
 
             resolved_printings
@@ -758,6 +762,7 @@ mod tests {
             side: "runner".into(),
             pack_id: pack.map(|p| p.to_string()),
             date_release: date.map(|s| s.to_string()),
+            back_type: None,
         }
     }
 
@@ -1053,6 +1058,7 @@ mod tests {
             pack_id: Some("core".into()),
             date_release: Some("2017-10-05".into()),
             has_bleed: false,
+            back_type: None,
         };
         let row2 = AvailablePrintingRow {
             title: "Fine Katana".into(),
@@ -1066,6 +1072,7 @@ mod tests {
             pack_id: Some("emerald-core-set".into()),
             date_release: Some("2021-10-21".into()),
             has_bleed: false,
+            back_type: None,
         };
 
         let result = CardStore::assemble_printings(vec![row1, row2]);

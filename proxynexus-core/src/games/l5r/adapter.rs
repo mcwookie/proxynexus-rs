@@ -68,6 +68,7 @@ impl CatalogProvider for L5rAdapter {
                 title: title.clone(),
                 title_normalized: normalize_title(&title),
                 side: Some(c.side),
+                back_type: None,
             });
             for v in c.versions {
                 versions.push(CardVersion {

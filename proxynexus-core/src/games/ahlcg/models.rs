@@ -62,8 +62,10 @@ pub struct AhdbCard {
     pub pack_code: String,
     pub position: i64,
     /// e.g. "investigator", "asset", "event", "skill", "enemy", "treachery",
-    /// "act", "agenda", "location", "scenario", "story".
-    #[allow(dead_code)]
+    /// "act", "agenda", "location", "scenario", "story". Used by the
+    /// adapter's `back_type_for` to classify which generic card back
+    /// (player/encounter) a card needs -- see that function's doc comment
+    /// for why `faction_code` alone isn't reliable for this.
     pub type_code: String,
     /// Player faction ("guardian", "seeker", "rogue", "mystic", "survivor",
     /// "neutral") or "mythos" for encounter cards.

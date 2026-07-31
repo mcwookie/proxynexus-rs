@@ -138,6 +138,13 @@ pub async fn run_export(
     }
     .await;
 
+    let manifest_files = resolved_printings.as_ref().ok().map(|printings| {
+        let entries = proxynexus_core::manifest::build_manifest(printings);
+        let csv = proxynexus_core::manifest::manifest_to_csv(&entries);
+        let json = proxynexus_core::manifest::manifest_to_json(&entries).unwrap_or_default();
+        (csv, json)
+    });
+
     let selected_printings = if let Ok(ref printings) = resolved_printings {
         printings
             .iter()
@@ -241,10 +248,35 @@ pub async fn run_export(
         error_message,
     });
 
-    if let Ok(bytes) = result
-        && let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await
-    {
-        error!("Failed to save {}: {:?}", meta.format, e);
+    if let Ok(bytes) = result {
+        if let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await {
+            error!("Failed to save {}: {:?}", meta.format, e);
+        }
+
+        if let Some((csv, json)) = manifest_files {
+            if let Err(e) = save_file(
+                csv.as_bytes(),
+                "proxynexus_export_manifest.csv",
+                "CSV",
+                "csv",
+                "text/csv",
+            )
+            .await
+            {
+                error!("Failed to save card back manifest CSV: {:?}", e);
+            }
+            if let Err(e) = save_file(
+                json.as_bytes(),
+                "proxynexus_export_manifest.json",
+                "JSON",
+                "json",
+                "application/json",
+            )
+            .await
+            {
+                error!("Failed to save card back manifest JSON: {:?}", e);
+            }
+        }
     }
 
     progress_signal.set(None);

@@ -37,6 +37,59 @@ impl GameAdapterInfo for MarvelChampionsAdapter {
     }
 }
 
+// Which generic card back a card needs, classified by `type_code` rather
+// than `faction_code`/side. Unlike ArkhamDB, faction_code alone happened
+// to agree with type_code everywhere checked here (e.g. every "obligation"
+// card -- the "one card in a hero's own pack that uses the encounter
+// back" case -- also has faction_code "encounter"). type_code is still
+// used, for one general rule shared with the ahlcg adapter rather than a
+// different rule per game, and because it correctly distinguishes real
+// edge cases faction_code can't: "side_scheme" (encounter) vs
+// "player_side_scheme" (player, despite the name) are different
+// type_code values entirely, with player_side_scheme's faction_code
+// varying per hero (e.g. "leadership", "aggression") rather than being a
+// single consistent value to check against. type_code values confirmed
+// exhaustively against a full-catalog sample (not just Core Set) as of
+// this writing; anything not in either list below is left unclassified
+// (`None`) rather than guessed.
+#[cfg(not(target_arch = "wasm32"))]
+const PLAYER_TYPES: &[&str] = &[
+    "hero",
+    "alter_ego",
+    "ally",
+    "event",
+    "upgrade",
+    "support",
+    "resource",
+    "player_side_scheme",
+];
+#[cfg(not(target_arch = "wasm32"))]
+const ENCOUNTER_TYPES: &[&str] = &[
+    "villain",
+    "minion",
+    "main_scheme",
+    "side_scheme",
+    "attachment",
+    "treachery",
+    "obligation",
+    "environment",
+    "leader",
+    "evidence_means",
+    "evidence_motive",
+    "evidence_opportunity",
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+fn back_type_for(type_code: &str) -> Option<String> {
+    if PLAYER_TYPES.contains(&type_code) {
+        Some("player".to_string())
+    } else if ENCOUNTER_TYPES.contains(&type_code) {
+        Some("encounter".to_string())
+    } else {
+        None
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for MarvelChampionsAdapter {
@@ -72,6 +125,7 @@ impl CatalogProvider for MarvelChampionsAdapter {
                 title: card.name.clone(),
                 title_normalized: normalize_title(&card.name),
                 side: Some(card.faction_code.clone()),
+                back_type: back_type_for(&card.type_code),
             });
 
             card_versions.push(CardVersion {

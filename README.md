@@ -96,6 +96,14 @@ The `proxynexus-cli` supports the following subcommands. You can use `--help` on
 *   `generate pdf`: Generate a print-and-play PDF from a specific set, cardlist, or decklist URL.
 *   `generate mpc`: Generate a MakePlayingCards (MPC) formatted ZIP file.
 
+Both `generate` subcommands also write a `<output>_manifest.csv` and
+`<output>_manifest.json` alongside the PDF/ZIP, listing each included
+card's id, title, pack, and `back_type` (`"player"`/`"encounter"`/empty)
+— useful for knowing which generic card back to use per card when
+physically printing. See the root repo's `README.md` ("Card back
+manifest" section) for the full story on why distribution alone isn't a
+reliable signal for this.
+
 **Collection Management:**
 *   `collection build`: Create a new `.pnx` collection file from a directory of card scans.
 *   `collection add`: Load a `.pnx` collection into your local app.

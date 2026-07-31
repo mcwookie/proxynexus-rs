@@ -28,6 +28,16 @@ pub struct Card {
     pub title: String,
     pub title_normalized: String,
     pub side: Option<String>,
+    /// Which generic card back this card needs when proxied: `"player"` or
+    /// `"encounter"`. Not the same axis as `side` (deckbuilding
+    /// faction/side) -- e.g. an Arkham Horror LCG asset card found via an
+    /// encounter set but usable in a player deck needs the player back
+    /// despite having faction_code "mythos". `None` for adapters that
+    /// haven't classified this yet (only `marvel_champions`/`ahlcg` do so
+    /// far -- see each adapter's `back_type_for` for the exact per-game
+    /// classification and the data confirming why a naive `side`-based
+    /// guess would be wrong for some cards).
+    pub back_type: Option<String>,
 }
 
 pub struct CardVersion {
@@ -155,15 +165,20 @@ impl<'a> CatalogManager<'a> {
                 .side
                 .as_ref()
                 .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let back_type = card
+                .back_type
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
             let db_card_id = format!("{}_{}", catalog.game_id, card.id);
             let q = format!(
-                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side) VALUES ({}, {}, {}, {}, {}, {})",
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type) VALUES ({}, {}, {}, {}, {}, {}, {})",
                 quote_sql_string(&db_card_id),
                 quote_sql_string(&card.id),
                 quote_sql_string(&catalog.game_id),
                 quote_sql_string(&card.title),
                 quote_sql_string(&card.title_normalized),
-                side
+                side,
+                back_type
             );
             self.db.execute(&q).await?;
         }

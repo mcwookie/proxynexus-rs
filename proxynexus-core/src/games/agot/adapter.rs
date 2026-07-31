@@ -80,6 +80,7 @@ impl CatalogProvider for AgotAdapter {
                         title: c.label.clone(), // Use label as title for clarity
                         title_normalized: normalized_id.clone(),
                         side: Some(side.to_string()),
+                        back_type: None,
                     },
                 );
             }

@@ -43,6 +43,7 @@ struct CardDbRow {
     title: String,
     title_normalized: String,
     side: Option<String>,
+    back_type: Option<String>,
 }
 
 #[derive(FromGlueRow)]
@@ -169,7 +170,8 @@ impl DbStorage {
                 game_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 title_normalized TEXT NOT NULL,
-                side TEXT
+                side TEXT,
+                back_type TEXT
             );
 
             CREATE TABLE IF NOT EXISTS card_versions (
@@ -193,6 +195,16 @@ impl DbStorage {
             ",
         )
         .await?;
+
+        // Additive migration for databases created before `back_type`
+        // existed -- `CREATE TABLE IF NOT EXISTS` above only applies to
+        // brand-new databases, so an already-existing `cards` table needs
+        // the column added explicitly. Best-effort: the only realistic
+        // failure is "column already exists" (every run after the first
+        // one against a given database), which is exactly the no-op we
+        // want, so any error here is intentionally ignored rather than
+        // propagated.
+        let _ = self.execute("ALTER TABLE cards ADD COLUMN back_type TEXT").await;
 
         Ok(())
     }
@@ -252,7 +264,7 @@ impl DbStorage {
             let rows: Vec<CardDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side) VALUES ",
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
@@ -261,14 +273,19 @@ impl DbStorage {
                             .side
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let back_type = row
+                            .back_type
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         format!(
-                            "({}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.api_id),
                             quote_sql_string(&row.game_id),
                             quote_sql_string(&row.title),
                             quote_sql_string(&row.title_normalized),
-                            side
+                            side,
+                            back_type
                         )
                     })
                     .collect();

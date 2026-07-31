@@ -40,6 +40,42 @@ impl GameAdapterInfo for AhlcgAdapter {
     }
 }
 
+// Which generic card back a card needs, classified by `type_code` rather
+// than `faction_code`/side -- confirmed real cards where they'd disagree:
+// 10 cards are type_code "asset" (usable in a player deck) but
+// faction_code "mythos" (e.g. "The Face", "The Muscle", recruitable allies
+// found via an encounter set) -- a faction-based guess would wrongly call
+// these encounter-back. Checked the reverse direction too (encounter-type
+// cards with a player-class faction): zero cases. `type_code` values
+// confirmed exhaustively against a full-catalog sample (not just Core
+// Set) as of this writing; anything not in either list below is left
+// unclassified (`None`) rather than guessed.
+#[cfg(not(target_arch = "wasm32"))]
+const PLAYER_TYPES: &[&str] = &["investigator", "asset", "event", "skill"];
+#[cfg(not(target_arch = "wasm32"))]
+const ENCOUNTER_TYPES: &[&str] = &[
+    "enemy",
+    "enemy_location",
+    "treachery",
+    "agenda",
+    "act",
+    "location",
+    "scenario",
+    "story",
+    "key",
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+fn back_type_for(type_code: &str) -> Option<String> {
+    if PLAYER_TYPES.contains(&type_code) {
+        Some("player".to_string())
+    } else if ENCOUNTER_TYPES.contains(&type_code) {
+        Some("encounter".to_string())
+    } else {
+        None
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for AhlcgAdapter {
@@ -74,6 +110,7 @@ impl CatalogProvider for AhlcgAdapter {
                 title: card.name.clone(),
                 title_normalized: normalize_title(&card.name),
                 side: Some(card.faction_code.clone()),
+                back_type: back_type_for(&card.type_code),
             });
 
             card_versions.push(CardVersion {

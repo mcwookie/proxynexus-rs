@@ -7,6 +7,7 @@ use proxynexus_core::collection_manager::CollectionManager;
 use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::games::get_card_back_adapter;
 use proxynexus_core::image_provider::LocalImageProvider;
+use proxynexus_core::manifest::{build_manifest, manifest_to_csv, manifest_to_json};
 use proxynexus_core::models::Printing;
 use proxynexus_core::mpc::generate_mpc_zip;
 use proxynexus_core::pdf::{
@@ -14,7 +15,7 @@ use proxynexus_core::pdf::{
     PdfOptions, generate_pdf,
 };
 use proxynexus_core::query::{generate_query_output, list_available_sets};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 use web_time::Instant;
 
@@ -417,6 +418,37 @@ async fn get_printings_from_source(
         .context("Failed to resolve printings")
 }
 
+/// Writes a CSV and a JSON manifest alongside `output_path`, listing each
+/// printing's card back type (player/encounter) so it can be cross-referenced
+/// when physically printing the generated PDF/MPC output.
+fn write_manifest_files(printings: &[Printing], output_path: &Path) -> anyhow::Result<()> {
+    let entries = build_manifest(printings);
+    let stem = output_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "output".to_string());
+    let dir = output_path.parent().filter(|p| !p.as_os_str().is_empty());
+    let manifest_path = |ext: &str| match dir {
+        Some(dir) => dir.join(format!("{}_manifest.{}", stem, ext)),
+        None => PathBuf::from(format!("{}_manifest.{}", stem, ext)),
+    };
+
+    let csv_path = manifest_path("csv");
+    std::fs::write(&csv_path, manifest_to_csv(&entries))
+        .with_context(|| format!("Failed to write manifest CSV to {:?}", csv_path))?;
+
+    let json_path = manifest_path("json");
+    let json = manifest_to_json(&entries).context("Failed to serialize manifest JSON")?;
+    std::fs::write(&json_path, json)
+        .with_context(|| format!("Failed to write manifest JSON to {:?}", json_path))?;
+
+    println!(
+        "Card back manifest written: {:?}, {:?}",
+        csv_path, json_path
+    );
+    Ok(())
+}
+
 async fn handle_generate(
     db: &mut DbStorage,
     game: &str,
@@ -451,6 +483,8 @@ async fn handle_generate(
             let source = determine_input_source(cardlist, set_name, decklist_url);
 
             let printings = get_printings_from_source(db, game, source).await?;
+            write_manifest_files(&printings, &output_path)
+                .context("Failed to write card back manifest")?;
 
             let pdf_bytes = generate_pdf(
                 printings,
@@ -484,6 +518,8 @@ async fn handle_generate(
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
+            write_manifest_files(&printings, &output_path)
+                .context("Failed to write card back manifest")?;
 
             let card_backs = if let Some(adapter) = get_card_back_adapter(game) {
                 adapter.fetch_card_backs().await.unwrap_or_default()

@@ -30,6 +30,10 @@ pub struct Printing {
     pub side: String,
     pub pack_id: Option<String>,
     pub date_release: Option<String>,
+    /// Which generic card back this card needs when proxied: `"player"` or
+    /// `"encounter"`, or `None` if the game adapter hasn't classified it
+    /// (see `catalog::Card::back_type`). Not the same axis as `side`.
+    pub back_type: Option<String>,
 }
 
 impl PrintingPart {
