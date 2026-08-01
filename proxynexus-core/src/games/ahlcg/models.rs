@@ -72,16 +72,48 @@ pub struct AhdbCard {
     pub faction_code: String,
     #[serde(default)]
     pub quantity: Option<i64>,
-    /// True for cards with a printed back side (most investigators, acts,
-    /// and agendas). Unlike MarvelCDB, ArkhamDB keeps both sides under this
-    /// single `code` -- `imagesrc`/`backimagesrc` point to the front/back
-    /// art rather than issuing the back its own card entry. That maps
-    /// directly onto Proxy Nexus's `{card_id}@{pack_id}~back` part-naming
-    /// convention, so no card-splitting is needed here (contrast with the
-    /// MarvelCDB adapter's linked_card flattening).
+    /// True for cards with a printed back side that's just the flip side of
+    /// this same card (most investigators, acts, and agendas) -- ArkhamDB
+    /// keeps both sides under this single `code`, with `imagesrc`/
+    /// `backimagesrc` pointing to the front/back art rather than issuing
+    /// the back its own card entry. That maps directly onto Proxy Nexus's
+    /// `{card_id}@{pack_id}~back` part-naming convention, so no
+    /// card-splitting is needed for these -- deliberately does NOT affect
+    /// `back_type`, which stays based on this card's own `type_code`
+    /// regardless (the back is still always the same player/encounter
+    /// identity as the front for this category).
     #[allow(dead_code)]
     #[serde(default)]
     pub double_sided: Option<bool>,
+    /// Set instead of (or, rarely, alongside) `double_sided` when this
+    /// card's back is a MECHANICALLY DIFFERENT card -- e.g. an ally that
+    /// flips into an enemy (Carl Sanford, "The Midwinter Gala") -- rather
+    /// than just the flip side of the same identity. Confirmed via a live
+    /// scan of all 113 ArkhamDB packs: 464 cards carry this, 52 of which
+    /// have a front/back that classify to a *different* back_type (player
+    /// vs encounter) -- e.g. Carl Sanford himself is `asset`/player up
+    /// front but his linked `71034b` is `enemy`/encounter. The linked card
+    /// never appears as its own top-level entry in any per-pack listing
+    /// (confirmed empirically), only nested here -- see `linked_card`.
+    #[serde(default)]
+    pub linked_to_code: Option<String>,
+    /// The full linked card's data, embedded inline by ArkhamDB's API
+    /// (present whenever `linked_to_code` is). Used only for its
+    /// `code`/`name`/`type_code` -- surfaced in the manifest as
+    /// `linked_card_code`/`linked_card_name`/`linked_card_back_type` so
+    /// generation output can show what the physical card's back actually
+    /// is, without changing this card's own `back_type`.
+    #[serde(default)]
+    pub linked_card: Option<Box<AhdbLinkedCard>>,
+}
+
+/// The subset of a linked card's fields we actually need -- see
+/// `AhdbCard::linked_card`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AhdbLinkedCard {
+    pub code: String,
+    pub name: String,
+    pub type_code: String,
 }
 
 /// A decklist from ArkhamDB's `/api/public/decklist/{id}` endpoint. Mirrors

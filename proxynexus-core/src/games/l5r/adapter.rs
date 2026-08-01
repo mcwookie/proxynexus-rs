@@ -69,6 +69,9 @@ impl CatalogProvider for L5rAdapter {
                 title_normalized: normalize_title(&title),
                 side: Some(c.side),
                 back_type: None,
+                linked_card_code: None,
+                linked_card_name: None,
+                linked_card_back_type: None,
             });
             for v in c.versions {
                 versions.push(CardVersion {

@@ -120,6 +120,9 @@ impl CatalogProvider for LotrLcgAdapter {
                     // data source anyway (RingsDB's public API doesn't
                     // expose encounter-side cards at all).
                     back_type: None,
+                    linked_card_code: None,
+                    linked_card_name: None,
+                    linked_card_back_type: None,
                 });
             }
 
@@ -180,6 +183,9 @@ impl CatalogProvider for LotrLcgAdapter {
                         title_normalized: base_normalized,
                         side: Some(side.to_string()),
                         back_type: None,
+                        linked_card_code: None,
+                        linked_card_name: None,
+                        linked_card_back_type: None,
                     });
                 }
 
@@ -256,6 +262,9 @@ impl CatalogProvider for LotrLcgAdapter {
                         title_normalized: base_normalized,
                         side: Some(side.to_string()),
                         back_type: None,
+                        linked_card_code: None,
+                        linked_card_name: None,
+                        linked_card_back_type: None,
                     });
                 }
 

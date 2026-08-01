@@ -44,6 +44,9 @@ struct CardDbRow {
     title_normalized: String,
     side: Option<String>,
     back_type: Option<String>,
+    linked_card_code: Option<String>,
+    linked_card_name: Option<String>,
+    linked_card_back_type: Option<String>,
 }
 
 #[derive(FromGlueRow)]
@@ -171,7 +174,10 @@ impl DbStorage {
                 title TEXT NOT NULL,
                 title_normalized TEXT NOT NULL,
                 side TEXT,
-                back_type TEXT
+                back_type TEXT,
+                linked_card_code TEXT,
+                linked_card_name TEXT,
+                linked_card_back_type TEXT
             );
 
             CREATE TABLE IF NOT EXISTS card_versions (
@@ -205,6 +211,15 @@ impl DbStorage {
         // want, so any error here is intentionally ignored rather than
         // propagated.
         let _ = self.execute("ALTER TABLE cards ADD COLUMN back_type TEXT").await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_code TEXT")
+            .await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_name TEXT")
+            .await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_back_type TEXT")
+            .await;
 
         Ok(())
     }
@@ -264,7 +279,7 @@ impl DbStorage {
             let rows: Vec<CardDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type) VALUES ",
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type, linked_card_code, linked_card_name, linked_card_back_type) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
@@ -277,15 +292,30 @@ impl DbStorage {
                             .back_type
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_code = row
+                            .linked_card_code
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_name = row
+                            .linked_card_name
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_back_type = row
+                            .linked_card_back_type
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         format!(
-                            "({}, {}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.api_id),
                             quote_sql_string(&row.game_id),
                             quote_sql_string(&row.title),
                             quote_sql_string(&row.title_normalized),
                             side,
-                            back_type
+                            back_type,
+                            linked_card_code,
+                            linked_card_name,
+                            linked_card_back_type
                         )
                     })
                     .collect();

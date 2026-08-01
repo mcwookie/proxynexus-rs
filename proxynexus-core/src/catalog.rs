@@ -38,6 +38,20 @@ pub struct Card {
     /// classification and the data confirming why a naive `side`-based
     /// guess would be wrong for some cards).
     pub back_type: Option<String>,
+    /// Set when this card's back is a MECHANICALLY DIFFERENT card (e.g.
+    /// Arkham Horror LCG's Carl Sanford, an asset/player card up front that
+    /// flips into an enemy/encounter card on the back) rather than either a
+    /// generic back or the flip side of the same identity. Purely
+    /// informational -- deliberately does not affect `back_type`, which
+    /// always reflects this card's own front classification. `None` for
+    /// every card without this kind of linked back (the vast majority).
+    /// Currently only populated by the `ahlcg` adapter.
+    pub linked_card_code: Option<String>,
+    pub linked_card_name: Option<String>,
+    /// The linked card's own back_type classification (player/encounter),
+    /// computed the same way as this card's `back_type` but from the
+    /// linked card's `type_code` instead.
+    pub linked_card_back_type: Option<String>,
 }
 
 pub struct CardVersion {
@@ -169,16 +183,31 @@ impl<'a> CatalogManager<'a> {
                 .back_type
                 .as_ref()
                 .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_code = card
+                .linked_card_code
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_name = card
+                .linked_card_name
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_back_type = card
+                .linked_card_back_type
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
             let db_card_id = format!("{}_{}", catalog.game_id, card.id);
             let q = format!(
-                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type) VALUES ({}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type, linked_card_code, linked_card_name, linked_card_back_type) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                 quote_sql_string(&db_card_id),
                 quote_sql_string(&card.id),
                 quote_sql_string(&catalog.game_id),
                 quote_sql_string(&card.title),
                 quote_sql_string(&card.title_normalized),
                 side,
-                back_type
+                back_type,
+                linked_card_code,
+                linked_card_name,
+                linked_card_back_type
             );
             self.db.execute(&q).await?;
         }

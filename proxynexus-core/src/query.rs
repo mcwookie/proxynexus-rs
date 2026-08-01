@@ -226,6 +226,9 @@ mod tests {
             pack_id: pack.map(|p| p.to_string()),
             date_release: None,
             back_type: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_type: None,
         }
     }
 

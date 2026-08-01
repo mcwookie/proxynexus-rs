@@ -81,6 +81,9 @@ impl CatalogProvider for AgotAdapter {
                         title_normalized: normalized_id.clone(),
                         side: Some(side.to_string()),
                         back_type: None,
+                        linked_card_code: None,
+                        linked_card_name: None,
+                        linked_card_back_type: None,
                     },
                 );
             }

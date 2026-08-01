@@ -126,6 +126,9 @@ impl CatalogProvider for MarvelChampionsAdapter {
                 title_normalized: normalize_title(&card.name),
                 side: Some(card.faction_code.clone()),
                 back_type: back_type_for(&card.type_code),
+                linked_card_code: None,
+                linked_card_name: None,
+                linked_card_back_type: None,
             });
 
             card_versions.push(CardVersion {

@@ -34,6 +34,13 @@ pub struct Printing {
     /// `"encounter"`, or `None` if the game adapter hasn't classified it
     /// (see `catalog::Card::back_type`). Not the same axis as `side`.
     pub back_type: Option<String>,
+    /// Set when this card's back is a mechanically different card (e.g.
+    /// Arkham Horror's Carl Sanford, asset/player up front, enemy/encounter
+    /// on the back) -- see `catalog::Card::linked_card_code`. `back_type`
+    /// above is unaffected by this and always reflects the front alone.
+    pub linked_card_code: Option<String>,
+    pub linked_card_name: Option<String>,
+    pub linked_card_back_type: Option<String>,
 }
 
 impl PrintingPart {

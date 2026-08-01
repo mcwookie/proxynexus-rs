@@ -44,7 +44,12 @@ pub async fn fetch_all_cards(packs: &[AhdbPack]) -> Result<Vec<AhdbCard>> {
 /// Fetches cards for a single pack. Unlike MarvelCDB, ArkhamDB represents a
 /// double-sided card (e.g. an investigator's front/back) as one entry with
 /// `imagesrc`/`backimagesrc` fields rather than a separate hidden card, so
-/// no linked-card flattening is needed here.
+/// no linked-card *flattening* (MarvelCDB-style card-splitting) is needed
+/// here. ArkhamDB does still have its own `linked_to_code`/`linked_card`
+/// for a different case -- a card whose back is a mechanically distinct
+/// card (e.g. an ally that flips into an enemy) -- deserialized directly
+/// onto `AhdbCard` and used only to enrich the manifest, not to split
+/// catalog entries. See `AhdbCard::linked_card`'s doc comment.
 pub async fn fetch_cards_for_pack(pack_code: &str) -> Result<Vec<AhdbCard>> {
     fetch_json(&format!("{BASE_URL}/cards/{pack_code}")).await
 }

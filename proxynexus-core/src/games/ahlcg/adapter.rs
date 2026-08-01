@@ -105,12 +105,28 @@ impl CatalogProvider for AhlcgAdapter {
             // each ArkhamDB card maps 1:1 to a Card/CardVersion here. The
             // back image is picked up separately at collection-build time
             // via the `{card_id}@{pack_id}~back` filename convention.
+            //
+            // linked_card (when present) is a DIFFERENT thing from that --
+            // a mechanically distinct card ArkhamDB never lists on its own
+            // (e.g. Carl Sanford, an asset/player card up front, links to
+            // 71034b, an enemy/encounter card on the back). Deliberately
+            // does NOT change this card's own back_type (still purely
+            // type_code-based, same as every other card) -- it only adds
+            // supplementary linked_card_* info so generation output can
+            // show what the physical back actually is.
+            let linked_card_back_type = card
+                .linked_card
+                .as_ref()
+                .and_then(|lc| back_type_for(&lc.type_code));
             cards.push(Card {
                 id: card.code.clone(),
                 title: card.name.clone(),
                 title_normalized: normalize_title(&card.name),
                 side: Some(card.faction_code.clone()),
                 back_type: back_type_for(&card.type_code),
+                linked_card_code: card.linked_card.as_ref().map(|lc| lc.code.clone()),
+                linked_card_name: card.linked_card.as_ref().map(|lc| lc.name.clone()),
+                linked_card_back_type,
             });
 
             card_versions.push(CardVersion {
