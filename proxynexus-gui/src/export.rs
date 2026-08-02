@@ -177,6 +177,8 @@ pub async fn run_export(
     #[cfg(target_arch = "wasm32")]
     let image_provider_result = Ok(proxynexus_core::image_provider::RemoteImageProvider);
 
+    let mut mpc_autofill_slots: Option<Vec<proxynexus_core::mpc::AutofillSlot>> = None;
+
     let result = match (resolved_printings, image_provider_result) {
         (Ok(printings), Ok(image_provider)) => match options {
             ExportOptions::Pdf(pdf_opts) => {
@@ -195,7 +197,7 @@ pub async fn run_export(
                         vec![]
                     };
 
-                generate_mpc_zip(
+                match generate_mpc_zip(
                     printings,
                     &image_provider,
                     mpc_opts,
@@ -203,7 +205,13 @@ pub async fn run_export(
                     progress_callback,
                 )
                 .await
-                .context("MPC ZIP generation failed")
+                {
+                    Ok(mpc_output) => {
+                        mpc_autofill_slots = Some(mpc_output.autofill_slots);
+                        Ok(mpc_output.zip_bytes)
+                    }
+                    Err(e) => Err(e).context("MPC ZIP generation failed"),
+                }
             }
         },
         (Err(e), _) => Err(e),
@@ -275,6 +283,29 @@ pub async fn run_export(
             .await
             {
                 error!("Failed to save card back manifest JSON: {:?}", e);
+            }
+        }
+
+        if let Some(slots) = mpc_autofill_slots {
+            // No stock/foil picker in the GUI yet -- (S33) Superior Smooth,
+            // non-foil, matching the CLI's own default.
+            let xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
+                &slots,
+                proxynexus_core::mpc::MpcAutofillOptions {
+                    stock: proxynexus_core::mpc::Cardstock::S33,
+                    foil: false,
+                },
+            );
+            if let Err(e) = save_file(
+                xml.as_bytes(),
+                "proxynexus_export_mpc_autofill.xml",
+                "XML",
+                "xml",
+                "application/xml",
+            )
+            .await
+            {
+                error!("Failed to save mpc-autofill order XML: {:?}", e);
             }
         }
     }

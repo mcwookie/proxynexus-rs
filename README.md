@@ -104,6 +104,16 @@ physically printing. See the root repo's `README.md` ("Card back
 manifest" section) for the full story on why distribution alone isn't a
 reliable signal for this.
 
+`generate mpc` additionally writes a `<output>_mpc_autofill.xml` — an
+order file for the [mpc-autofill](https://github.com/chilli-axe/mpc-autofill)
+desktop tool, which auto-fills an entire MakePlayingCards order (front/
+back placement, cardstock, foil) from it — no manual drag-and-drop
+needed. `--stock` (`s27`/`s30`/`s33`/`m31`/`p10`, default `s33`) and
+`--foil` control the order-level cardstock/finish. See the root repo's
+`README.md` ("mpc-autofill order XML" section) for the full schema
+details and why every card gets an explicit back assignment instead of
+relying on a single order-wide fallback.
+
 **Collection Management:**
 *   `collection build`: Create a new `.pnx` collection file from a directory of card scans.
 *   `collection add`: Load a `.pnx` collection into your local app.

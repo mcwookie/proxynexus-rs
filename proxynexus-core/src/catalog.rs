@@ -29,7 +29,9 @@ pub struct Card {
     pub title_normalized: String,
     pub side: Option<String>,
     /// Which generic card back this card needs when proxied: `"player"` or
-    /// `"encounter"`. Not the same axis as `side` (deckbuilding
+    /// `"encounter"` for most adapters; `marvel_champions` also has a third,
+    /// `"villain"`, for the physical Villain card's own back art. Not the
+    /// same axis as `side` (deckbuilding
     /// faction/side) -- e.g. an Arkham Horror LCG asset card found via an
     /// encounter set but usable in a player deck needs the player back
     /// despite having faction_code "mythos". `None` for adapters that

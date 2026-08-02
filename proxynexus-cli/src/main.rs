@@ -156,6 +156,14 @@ enum GenerateType {
 
         #[arg(long)]
         upscale: bool,
+
+        /// Cardstock for the companion mpc-autofill order XML.
+        #[arg(long, default_value = "s33")]
+        stock: String,
+
+        /// Foil finish for the companion mpc-autofill order XML.
+        #[arg(long)]
+        foil: bool,
     },
     Bleed {
         #[arg(short, long)]
@@ -449,6 +457,27 @@ fn write_manifest_files(printings: &[Printing], output_path: &Path) -> anyhow::R
     Ok(())
 }
 
+/// Writes an mpc-autofill order XML alongside `output_path`, so unzipping
+/// the MPC ZIP and dropping this file in the same folder lets mpc-autofill
+/// (https://github.com/chilli-axe/mpc-autofill) fill the whole order --
+/// front/back pairing, cardstock, and foil -- without manual setup.
+fn write_mpc_autofill_xml(xml: &str, output_path: &Path) -> anyhow::Result<()> {
+    let stem = output_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "output".to_string());
+    let dir = output_path.parent().filter(|p| !p.as_os_str().is_empty());
+    let xml_path = match dir {
+        Some(dir) => dir.join(format!("{}_mpc_autofill.xml", stem)),
+        None => PathBuf::from(format!("{}_mpc_autofill.xml", stem)),
+    };
+
+    std::fs::write(&xml_path, xml)
+        .with_context(|| format!("Failed to write mpc-autofill order XML to {:?}", xml_path))?;
+    println!("mpc-autofill order XML written: {:?}", xml_path);
+    Ok(())
+}
+
 async fn handle_generate(
     db: &mut DbStorage,
     game: &str,
@@ -513,7 +542,10 @@ async fn handle_generate(
             decklist_url,
             output_path,
             upscale,
+            stock,
+            foil,
         } => {
+            let stock_enum = parse_stock(&stock).context("Invalid cardstock option")?;
             let source = determine_input_source(cardlist, set_name, decklist_url);
             let start = Instant::now();
 
@@ -527,7 +559,7 @@ async fn handle_generate(
                 vec![]
             };
 
-            let mpc_bytes = generate_mpc_zip(
+            let mpc_output = generate_mpc_zip(
                 printings,
                 image_provider,
                 proxynexus_core::mpc::MpcOptions { upscale },
@@ -537,7 +569,17 @@ async fn handle_generate(
             .await
             .context("Failed to generate MPC ZIP")?;
 
-            std::fs::write(&output_path, mpc_bytes)
+            let autofill_xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
+                &mpc_output.autofill_slots,
+                proxynexus_core::mpc::MpcAutofillOptions {
+                    stock: stock_enum,
+                    foil,
+                },
+            );
+            write_mpc_autofill_xml(&autofill_xml, &output_path)
+                .context("Failed to write mpc-autofill order XML")?;
+
+            std::fs::write(&output_path, mpc_output.zip_bytes)
                 .with_context(|| format!("Failed to write ZIP to {:?}", output_path))?;
             info!("runtime: {:?}", start.elapsed());
             println!("MPC ZIP created successfully: {:?}", output_path);
@@ -637,6 +679,21 @@ fn parse_cut_lines(cut_lines: Option<&str>) -> anyhow::Result<CutLines> {
         Some(unsupported) => Err(anyhow!(
             "Unsupported cut lines option: '{}'. Options are 'none', 'margins', or 'fullpage'",
             unsupported
+        )),
+    }
+}
+
+fn parse_stock(stock: &str) -> anyhow::Result<proxynexus_core::mpc::Cardstock> {
+    use proxynexus_core::mpc::Cardstock;
+    match stock {
+        "s27" => Ok(Cardstock::S27),
+        "s30" => Ok(Cardstock::S30),
+        "s33" => Ok(Cardstock::S33),
+        "m31" => Ok(Cardstock::M31),
+        "p10" => Ok(Cardstock::P10),
+        _ => Err(anyhow!(
+            "Unsupported cardstock: '{}'. Options are 's27', 's30', 's33', 'm31', 'p10'",
+            stock
         )),
     }
 }

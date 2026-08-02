@@ -57,6 +57,7 @@ pub fn get_card_back_adapter(game_id: &str) -> Option<Box<dyn CardBackProvider>>
         "netrunner" => Some(Box::new(NetrunnerAdapter::new())),
         "l5r" => Some(Box::new(L5rAdapter::new())),
         "ahlcg" => Some(Box::new(AhlcgAdapter::new())),
+        "marvel_champions" => Some(Box::new(MarvelChampionsAdapter::new())),
         _ => None,
     }
 }

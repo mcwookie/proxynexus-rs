@@ -31,7 +31,8 @@ pub struct Printing {
     pub pack_id: Option<String>,
     pub date_release: Option<String>,
     /// Which generic card back this card needs when proxied: `"player"` or
-    /// `"encounter"`, or `None` if the game adapter hasn't classified it
+    /// `"encounter"` for most adapters (`marvel_champions` also has
+    /// `"villain"`), or `None` if the game adapter hasn't classified it
     /// (see `catalog::Card::back_type`). Not the same axis as `side`.
     pub back_type: Option<String>,
     /// Set when this card's back is a mechanically different card (e.g.
