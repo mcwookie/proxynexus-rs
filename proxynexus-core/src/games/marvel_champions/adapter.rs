@@ -99,6 +99,63 @@ fn back_type_for(type_code: &str) -> Option<String> {
     }
 }
 
+/// Turns the flat, per-pack-fetched `McdbCard` list into catalog rows.
+///
+/// Confirmed live (MarvelCDB API + official rules): a hero's alter-ego
+/// side is NOT a separately printable card -- it's the *back* of the same
+/// physical identity card players flip between Hero and Alter-Ego, exactly
+/// like an ArkhamDB investigator's front/back. MarvelCDB's own
+/// `double_sided: false` flag on both sides is misleading here; the real
+/// signal is `hidden` (see `McdbCard::hidden`'s doc comment) -- the hidden
+/// side must not get its own Card/CardVersion or show up independently in
+/// search/generation, only as `linked_card_*` metadata on its visible
+/// counterpart (mirrors how the `ahlcg` adapter treats a linked_to_code
+/// pair like Carl Sanford/71034b). Needed a live scan to confirm scope
+/// before trusting this: 69 hero cards across the whole catalog carry a
+/// `back_link`, all following this shape.
+#[cfg(not(target_arch = "wasm32"))]
+fn build_cards_and_versions(
+    mcdb_cards: &[crate::games::marvel_champions::models::McdbCard],
+) -> (Vec<Card>, Vec<CardVersion>) {
+    let by_code: std::collections::HashMap<&str, &crate::games::marvel_champions::models::McdbCard> =
+        mcdb_cards.iter().map(|c| (c.code.as_str(), c)).collect();
+
+    let mut cards = Vec::with_capacity(mcdb_cards.len());
+    let mut card_versions = Vec::with_capacity(mcdb_cards.len());
+
+    for card in mcdb_cards {
+        if card.hidden == Some(true) {
+            continue;
+        }
+
+        let linked = card
+            .back_link
+            .as_deref()
+            .and_then(|code| by_code.get(code))
+            .copied();
+
+        cards.push(Card {
+            id: card.code.clone(),
+            title: card.name.clone(),
+            title_normalized: normalize_title(&card.name),
+            side: Some(card.faction_code.clone()),
+            back_type: back_type_for(&card.type_code),
+            linked_card_code: linked.map(|l| l.code.clone()),
+            linked_card_name: linked.map(|l| l.name.clone()),
+            linked_card_back_type: linked.and_then(|l| back_type_for(&l.type_code)),
+        });
+
+        card_versions.push(CardVersion {
+            card_id: card.code.clone(),
+            pack_id: card.pack_code.clone(),
+            quantity: card.quantity.unwrap_or(1),
+            position: Some(card.position),
+        });
+    }
+
+    (cards, card_versions)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 impl CatalogProvider for MarvelChampionsAdapter {
@@ -119,34 +176,7 @@ impl CatalogProvider for MarvelChampionsAdapter {
             })
             .collect();
 
-        let mut cards = Vec::with_capacity(mcdb_cards.len());
-        let mut card_versions = Vec::with_capacity(mcdb_cards.len());
-
-        for card in mcdb_cards {
-            // Every MarvelCDB `code` — including hidden alter-ego/back-side
-            // entries like Peter Parker (01001b) — becomes its own Card and
-            // CardVersion. MarvelCDB already assigns each physical card face
-            // its own code and image, so this 1:1 mapping lines up directly
-            // with the `{card_id}@{pack_id}` image naming convention without
-            // needing any `~back` part logic.
-            cards.push(Card {
-                id: card.code.clone(),
-                title: card.name.clone(),
-                title_normalized: normalize_title(&card.name),
-                side: Some(card.faction_code.clone()),
-                back_type: back_type_for(&card.type_code),
-                linked_card_code: None,
-                linked_card_name: None,
-                linked_card_back_type: None,
-            });
-
-            card_versions.push(CardVersion {
-                card_id: card.code,
-                pack_id: card.pack_code,
-                quantity: card.quantity.unwrap_or(1),
-                position: Some(card.position),
-            });
-        }
+        let (cards, card_versions) = build_cards_and_versions(&mcdb_cards);
 
         Ok(Catalog {
             game_id: self.game_id().to_string(),
@@ -212,5 +242,109 @@ impl CardBackProvider for MarvelChampionsAdapter {
             let results: Vec<Result<(String, Vec<u8>)>> = join_all(fetch_futures).await;
             results.into_iter().collect()
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::games::marvel_champions::models::McdbCard;
+
+    fn hero(code: &str, name: &str, back_link: &str) -> McdbCard {
+        McdbCard {
+            code: code.to_string(),
+            name: name.to_string(),
+            pack_code: "vision".to_string(),
+            position: 1,
+            type_code: "hero".to_string(),
+            faction_code: "hero".to_string(),
+            back_link: Some(back_link.to_string()),
+            hidden: Some(false),
+            set_code: None,
+            set_position: None,
+            stage: None,
+            is_unique: Some(true),
+            quantity: Some(1),
+        }
+    }
+
+    fn alter_ego(code: &str, name: &str, back_link: &str) -> McdbCard {
+        McdbCard {
+            code: code.to_string(),
+            name: name.to_string(),
+            pack_code: "vision".to_string(),
+            position: 1,
+            type_code: "alter_ego".to_string(),
+            faction_code: "hero".to_string(),
+            back_link: Some(back_link.to_string()),
+            hidden: Some(true),
+            set_code: None,
+            set_position: None,
+            stage: None,
+            is_unique: Some(true),
+            quantity: Some(1),
+        }
+    }
+
+    fn plain_encounter_card(code: &str, name: &str) -> McdbCard {
+        McdbCard {
+            code: code.to_string(),
+            name: name.to_string(),
+            pack_code: "vision".to_string(),
+            position: 30,
+            type_code: "minion".to_string(),
+            faction_code: "encounter".to_string(),
+            back_link: None,
+            hidden: None,
+            set_code: None,
+            set_position: None,
+            stage: None,
+            is_unique: None,
+            quantity: Some(1),
+        }
+    }
+
+    #[test]
+    fn hidden_alter_ego_side_gets_no_independent_catalog_entry() {
+        let raw = vec![
+            hero("26001a", "Vision", "26001b"),
+            alter_ego("26001b", "Vision", "26001a"),
+        ];
+        let (cards, versions) = build_cards_and_versions(&raw);
+
+        assert_eq!(cards.len(), 1, "the hidden alter-ego side must not become its own Card");
+        assert_eq!(versions.len(), 1, "the hidden alter-ego side must not become its own CardVersion");
+        assert_eq!(cards[0].id, "26001a");
+    }
+
+    #[test]
+    fn visible_hero_side_carries_linked_card_metadata_from_its_alter_ego() {
+        let raw = vec![
+            hero("26001a", "Vision", "26001b"),
+            alter_ego("26001b", "Vision", "26001a"),
+        ];
+        let (cards, _) = build_cards_and_versions(&raw);
+
+        let vision = &cards[0];
+        assert_eq!(vision.linked_card_code.as_deref(), Some("26001b"));
+        assert_eq!(vision.linked_card_name.as_deref(), Some("Vision"));
+        // alter_ego is in PLAYER_TYPES, same as hero -- both sides need the
+        // player back, so this is expected to agree with vision.back_type,
+        // not disagree the way Carl Sanford's does in ahlcg.
+        assert_eq!(vision.linked_card_back_type.as_deref(), Some("player"));
+        assert_eq!(vision.back_type.as_deref(), Some("player"));
+    }
+
+    #[test]
+    fn card_with_no_back_link_gets_no_linked_card_metadata() {
+        let raw = vec![plain_encounter_card("01140", "Ultron Drones")];
+        let (cards, versions) = build_cards_and_versions(&raw);
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(versions.len(), 1);
+        assert_eq!(cards[0].linked_card_code, None);
+        assert_eq!(cards[0].linked_card_name, None);
+        assert_eq!(cards[0].linked_card_back_type, None);
+        assert_eq!(cards[0].back_type.as_deref(), Some("encounter"));
     }
 }

@@ -66,7 +66,17 @@ const ENCOUNTER_TYPES: &[&str] = &[
 ];
 
 #[cfg(not(target_arch = "wasm32"))]
-fn back_type_for(type_code: &str) -> Option<String> {
+fn back_type_for(type_code: &str, subtype_code: Option<&str>) -> Option<String> {
+    // Weakness cards are drawn from -- and shuffled back into -- the
+    // investigator's own deck, so they carry the PLAYER card back
+    // regardless of type_code, even for "enemy"/"treachery" weaknesses
+    // (e.g. Mob Goons, 08003) that resolve as an "encounter cardtype" card
+    // per the Rules Reference once drawn. That resolution-mechanics
+    // classification is not the same axis as the physical print -- see
+    // `AhdbCard::subtype_code`'s doc comment for the confirming evidence.
+    if matches!(subtype_code, Some("weakness") | Some("basicweakness")) {
+        return Some("player".to_string());
+    }
     if PLAYER_TYPES.contains(&type_code) {
         Some("player".to_string())
     } else if ENCOUNTER_TYPES.contains(&type_code) {
@@ -117,13 +127,13 @@ impl CatalogProvider for AhlcgAdapter {
             let linked_card_back_type = card
                 .linked_card
                 .as_ref()
-                .and_then(|lc| back_type_for(&lc.type_code));
+                .and_then(|lc| back_type_for(&lc.type_code, None));
             cards.push(Card {
                 id: card.code.clone(),
                 title: card.name.clone(),
                 title_normalized: normalize_title(&card.name),
                 side: Some(card.faction_code.clone()),
-                back_type: back_type_for(&card.type_code),
+                back_type: back_type_for(&card.type_code, card.subtype_code.as_deref()),
                 linked_card_code: card.linked_card.as_ref().map(|lc| lc.code.clone()),
                 linked_card_name: card.linked_card.as_ref().map(|lc| lc.name.clone()),
                 linked_card_back_type,

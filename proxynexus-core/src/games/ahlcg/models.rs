@@ -105,6 +105,20 @@ pub struct AhdbCard {
     /// is, without changing this card's own `back_type`.
     #[serde(default)]
     pub linked_card: Option<Box<AhdbLinkedCard>>,
+    /// "weakness" or "basicweakness" when this card is a weakness --
+    /// absent for every other card, regardless of `type_code`. Weakness
+    /// cards physically print with the PLAYER card back even when their
+    /// `type_code` is "enemy" or "treachery" (e.g. Mob Goons, 08003): that
+    /// `type_code` still governs how the card *resolves* once drawn (an
+    /// "encounter cardtype" card per the Rules Reference -- not controlled
+    /// by any player, resolved like a card drawn from the encounter deck),
+    /// but the card itself was drawn from -- and gets shuffled back into --
+    /// the investigator's own deck, so it has to carry that deck's back.
+    /// Confirmed against a real physical scan and a community TTS mod's
+    /// card-back catalog (Mob Goons uses the identical BackURL and
+    /// "PlayerCard" tag as ordinary player cards, not the encounter back).
+    #[serde(default)]
+    pub subtype_code: Option<String>,
 }
 
 /// The subset of a linked card's fields we actually need -- see

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # proxynexus-gui is excluded here on purpose: it's a Dioxus web/WASM
+      # app that needs system webview libs (libsoup-3.0, webkit2gtk) for a
+      # plain native `cargo build`, and is really only ever built via
+      # `dx build --platform web` (see Dockerfile.web) which targets
+      # wasm32, not the native host target this job runs on.
+      - name: Build (core + cli)
+        run: cargo build --workspace --exclude proxynexus-gui --verbose
+
+      - name: Test (core + cli)
+        run: cargo test --workspace --exclude proxynexus-gui --verbose
+
+      - name: Clippy (core + cli)
+        run: cargo clippy --workspace --exclude proxynexus-gui --all-targets -- -D warnings

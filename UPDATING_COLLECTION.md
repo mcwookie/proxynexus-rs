@@ -36,9 +36,10 @@ rebuild the .pnx  ->  remove the old collection  ->  add the new one
    Convention section) —
    `card_id` and `pack_id` must exactly match the official API's codes
    (MarvelCDB or ArkhamDB, whichever game this is). **The `~back` part
-   only applies to Arkham Horror LCG** — see "Double-sided cards: two
-   different conventions" below before naming any double-sided card's
-   files.
+   applies to both games** — see "Double-sided cards: two different
+   APIs, one convention" below before naming any double-sided card's
+   files (Marvel Champions' hero/alter-ego pairing needs it too, not
+   just Arkham Horror LCG's investigators).
 
    - **Marvel Champions**: a companion Python script
      (`rename_marvel_champions.py`, kept outside this repo) fuzzy-matches
@@ -141,31 +142,37 @@ Simpler -- you're not touching the catalog at all, just the image files.
 
 4. Update the Docker web app too if you're using it (same step 6 as above).
 
-## Double-sided cards: two different conventions
+## Double-sided cards: two different APIs, one convention
 
 Marvel Champions and Arkham Horror LCG represent a double-sided card
-differently at the source API, and the image naming has to follow suit —
-mixing these up either breaks the catalog match or (worse) silently
-produces the wrong result:
+differently at the source API, but **both need the same `~back`
+convention** -- an earlier version of this doc got Marvel Champions
+wrong here (said "never use `~back`"), which was backwards. Corrected
+after user pushback plus confirming the actual rules: a Marvel
+Champions hero's Hero/Alter-Ego forms are one physical card players
+flip during play, exactly like an ArkhamDB investigator -- not two
+separate cards, despite MarvelCDB's API making it look that way. See
+the main `README.md`'s "Marvel Champions hero/alter-ego: one physical
+card, not two" section for the full writeup.
 
 - **Arkham Horror LCG (ArkhamDB)**: a double-sided card (most
   investigators, acts, agendas) has **one** card code with separate
   `imagesrc`/`backimagesrc` fields. Name the files
   `{card_id}@{pack_id}.jpg` (front) and `{card_id}@{pack_id}~back.jpg`
-  (back) -- the `~back` part convention exists for exactly this case.
+  (back).
 
 - **Marvel Champions (MarvelCDB)**: a double-sided card (hero/alter-ego
-  pairs) gets **two separate card codes** from MarvelCDB itself, e.g.
-  `01001a` (Spider-Man) and `01001b` (Peter Parker) -- confirmed via
-  MarvelCDB's own `linked_to_code`/`linked_card` fields, and the catalog
-  treats them as two fully independent cards (`query --set-name "Core
-  Set" -g marvel_champions` lists "Spider-Man" and "Peter Parker" as
-  separate rows). **Never use `~back` here.** Each side just needs its
-  own plain front image: `01001a@core.jpg` and `01001b@core.jpg`. There
-  is no catalog entry for the bare code `01001`, so a file named
-  `01001@core~back.jpg` would fail to match any official printing at
-  all -- the `a`/`b` suffix is part of the real card ID, not a naming
-  mistake to "fix" into a `~back` part.
+  pairs, and some Main Scheme A/B sides) gets **two separate card
+  codes** from MarvelCDB's raw API, e.g. `01001a` (Spider-Man) and
+  `01001b` (Peter Parker) -- but only `01001a` is a real catalog entry
+  (`01001b` is MarvelCDB's `hidden: true` side and gets folded into
+  `01001a`'s `linked_card_*` metadata instead, same as `01001` never
+  being its own entry). Name the files `01001a@core.jpg` (front, Hero
+  art) and `01001a@core~back.jpg` (back, Alter-Ego art) -- **never**
+  `01001b@core.jpg`; there's no catalog entry for the raw `b` code, so a
+  file named that way silently fails to match any official printing.
+  `rename_marvel_champions.py` (the companion scanning tool) handles
+  this pairing automatically -- see its own doc for how.
 
 ## The same card showing up more than once within one pack/set
 
