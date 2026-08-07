@@ -108,9 +108,25 @@ rebuild the .pnx  ->  remove the old collection  ->  add the new one
    ```bash
    ./target/release/proxynexus-cli export --output data/init.sql
    cp -r ~/.proxynexus/collections/. data/collections/
-   docker compose build web --no-cache
-   docker compose up -d
    ```
+   `data/collections` is never tracked in git (see `.gitignore` -- it's
+   pure image data, GBs in size) and never goes near CI either way; that
+   copy always has to happen locally like this. `data/init.sql` **is**
+   tracked, though, which changes how the last step works:
+
+   - **Commit and push `data/init.sql`** (recommended) -- CI
+     (`.github/workflows/docker-build.yml`) builds a fresh image with
+     the new catalog automatically. Once that run finishes (check the
+     Actions tab), on the Docker host: `docker compose pull web &&
+     docker compose up -d`.
+   - **Or skip CI and rebuild locally** if you need it live immediately
+     and don't want to wait on a CI run: `docker compose build web
+     --no-cache && docker compose up -d`.
+
+   Either way, if any card images changed (not just the catalog), also
+   re-mirror them into MinIO -- neither path above touches that:
+   `docker compose up -d --force-recreate minio-init`.
+
    If Docker runs on a different machine than the one with the images,
    see the "Multi-machine setups" note below before assuming step 6
    alone is enough.

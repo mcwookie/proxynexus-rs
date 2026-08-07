@@ -68,9 +68,18 @@ git remote -v   # should show both origin (your fork) and upstream
    ```bash
    cargo build -p proxynexus-cli --release
    ```
-   And if `proxynexus-gui` changed at all, rebuild the Docker web app too
-   (see `../PACKAGING.md` / `SETUP.md` in the Docker package for that
-   flow):
+   And if `proxynexus-gui` changed at all, rebuild the Docker web app too.
+   Step 5's push already triggered CI
+   (`.github/workflows/docker-build.yml` in this repo, which checks out
+   `proxynexus-rs` fresh on every run) to build and push a new image —
+   once that run finishes (check the Actions tab), pull it on the Docker
+   host:
+   ```bash
+   docker compose pull web
+   docker compose up -d web
+   ```
+   Or skip waiting on CI and rebuild locally instead (see `../PACKAGING.md`
+   / `SETUP.md` in the Docker package for that flow):
    ```bash
    docker compose build web --no-cache
    docker compose up -d web

@@ -3,6 +3,10 @@
 Quick reference for re-doing this later (e.g. after updating your
 collection) without having to re-derive it from scratch.
 
+(Redeploying to *your own* Docker host, not a friend's? See the main
+`README.md`'s Quick Start instead — `docker compose pull web` covers
+that case via CI's published image, no packaging needed.)
+
 ## 1. Sanitize `.env` before packaging
 
 `.env` has *your* MinIO password and *your* Docker host's IP baked in —
