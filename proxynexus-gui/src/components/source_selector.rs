@@ -112,9 +112,7 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
         match set_sort_mode() {
             // get_available_packs() returns oldest-first; reverse for newest-first.
             SetSortMode::ReleaseDate => sets.reverse(),
-            SetSortMode::Alphabetical => {
-                sets.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
-            }
+            SetSortMode::Alphabetical => sets.sort_by_key(|a| a.0.to_lowercase()),
         }
         sets
     });
