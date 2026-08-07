@@ -179,7 +179,10 @@ mod tests {
         let entries = build_manifest(&printings);
         assert_eq!(entries[0].back_type, Some("player".to_string()));
         assert_eq!(entries[0].linked_card_code, Some("71034b".to_string()));
-        assert_eq!(entries[0].linked_card_name, Some("Carl Sanford".to_string()));
+        assert_eq!(
+            entries[0].linked_card_name,
+            Some("Carl Sanford".to_string())
+        );
         assert_eq!(
             entries[0].linked_card_back_type,
             Some("encounter".to_string())

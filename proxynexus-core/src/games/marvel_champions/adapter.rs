@@ -1,9 +1,9 @@
-use crate::error::Result;
-use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
+use crate::error::Result;
+use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::marvel_champions::api::{fetch_all_cards, fetch_packs};
 use crate::mpc::CardBackProvider;
@@ -117,8 +117,10 @@ fn back_type_for(type_code: &str) -> Option<String> {
 fn build_cards_and_versions(
     mcdb_cards: &[crate::games::marvel_champions::models::McdbCard],
 ) -> (Vec<Card>, Vec<CardVersion>) {
-    let by_code: std::collections::HashMap<&str, &crate::games::marvel_champions::models::McdbCard> =
-        mcdb_cards.iter().map(|c| (c.code.as_str(), c)).collect();
+    let by_code: std::collections::HashMap<
+        &str,
+        &crate::games::marvel_champions::models::McdbCard,
+    > = mcdb_cards.iter().map(|c| (c.code.as_str(), c)).collect();
 
     let mut cards = Vec::with_capacity(mcdb_cards.len());
     let mut card_versions = Vec::with_capacity(mcdb_cards.len());
@@ -201,8 +203,7 @@ impl CardBackProvider for MarvelChampionsAdapter {
                 ),
                 (
                     "marvel_champions_encounter_back.png".to_string(),
-                    include_bytes!("../../../assets/marvel_champions_encounter_back.png")
-                        .to_vec(),
+                    include_bytes!("../../../assets/marvel_champions_encounter_back.png").to_vec(),
                 ),
                 (
                     "marvel_champions_villain_back.png".to_string(),
@@ -312,8 +313,16 @@ mod tests {
         ];
         let (cards, versions) = build_cards_and_versions(&raw);
 
-        assert_eq!(cards.len(), 1, "the hidden alter-ego side must not become its own Card");
-        assert_eq!(versions.len(), 1, "the hidden alter-ego side must not become its own CardVersion");
+        assert_eq!(
+            cards.len(),
+            1,
+            "the hidden alter-ego side must not become its own Card"
+        );
+        assert_eq!(
+            versions.len(),
+            1,
+            "the hidden alter-ego side must not become its own CardVersion"
+        );
         assert_eq!(cards[0].id, "26001a");
     }
 

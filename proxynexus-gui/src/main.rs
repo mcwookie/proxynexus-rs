@@ -530,7 +530,10 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
 
         let mut grouped = HashMap::<String, Vec<Printing>>::new();
         for p in printings {
-            grouped.entry(p.card_id.clone()).or_default().push(p.clone());
+            grouped
+                .entry(p.card_id.clone())
+                .or_default()
+                .push(p.clone());
         }
         Some((grouped, available.clone()))
     });

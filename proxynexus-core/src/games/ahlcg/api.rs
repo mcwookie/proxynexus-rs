@@ -106,8 +106,7 @@ mod url_tests {
 
     #[test]
     fn parses_decklist_url_with_trailing_slash() {
-        let id =
-            parse_arkhamdb_decklist_url("https://arkhamdb.com/decklist/view/12345/").unwrap();
+        let id = parse_arkhamdb_decklist_url("https://arkhamdb.com/decklist/view/12345/").unwrap();
         assert_eq!(id, "12345");
     }
 

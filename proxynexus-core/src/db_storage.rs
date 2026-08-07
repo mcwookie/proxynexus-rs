@@ -210,7 +210,9 @@ impl DbStorage {
         // one against a given database), which is exactly the no-op we
         // want, so any error here is intentionally ignored rather than
         // propagated.
-        let _ = self.execute("ALTER TABLE cards ADD COLUMN back_type TEXT").await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN back_type TEXT")
+            .await;
         let _ = self
             .execute("ALTER TABLE cards ADD COLUMN linked_card_code TEXT")
             .await;

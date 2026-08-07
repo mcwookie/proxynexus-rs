@@ -117,7 +117,8 @@ pub async fn generate_mpc_zip(
         .await?;
     }
 
-    let zip_options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let zip_options =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     for (filename, bytes) in &card_backs {
         zip.start_file(filename, zip_options)?;
@@ -242,7 +243,10 @@ pub fn generate_mpc_autofill_xml(slots: &[AutofillSlot], options: MpcAutofillOpt
         .iter()
         .find_map(|s| s.back_filename.as_deref())
         .unwrap_or("");
-    xml.push_str(&format!("  <cardback>{}</cardback>\n", xml_escape(cardback)));
+    xml.push_str(&format!(
+        "  <cardback>{}</cardback>\n",
+        xml_escape(cardback)
+    ));
 
     xml.push_str("</order>\n");
     xml
@@ -536,11 +540,21 @@ mod tests {
         let written = vec![
             WrittenImage {
                 copy_num: 1,
-                ..written("81029", "front", "encounter-images/81029-1.png", Some("encounter"))
+                ..written(
+                    "81029",
+                    "front",
+                    "encounter-images/81029-1.png",
+                    Some("encounter"),
+                )
             },
             WrittenImage {
                 copy_num: 2,
-                ..written("81029", "front", "encounter-images/81029-2.png", Some("encounter"))
+                ..written(
+                    "81029",
+                    "front",
+                    "encounter-images/81029-2.png",
+                    Some("encounter"),
+                )
             },
         ];
         let slots = build_autofill_slots(written, &ahlcg_card_backs());
