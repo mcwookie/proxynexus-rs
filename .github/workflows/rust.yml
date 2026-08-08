@@ -80,7 +80,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build_and_test
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    # Disabled: this fork doesn't deploy to Cloudflare Pages (no
+    # CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID secrets set here) --
+    # deployment instead goes through docker-build.yml -> GHCR -> your own
+    # Docker host. Flip back to the condition below if you set up
+    # Cloudflare Pages/R2 later.
+    # if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: false
     steps:
     - uses: actions/checkout@v4
 
