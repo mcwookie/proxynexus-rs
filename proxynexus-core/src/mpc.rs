@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::io::{Cursor, Seek, Write};
 use tracing::info;
 use web_time::Instant;
+use zip::ZipArchive;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -133,6 +134,29 @@ pub async fn generate_mpc_zip(
         zip_bytes: zip_buffer.into_inner(),
         autofill_slots,
     })
+}
+
+/// Appends extra named files (e.g. the manifest CSV/JSON and the
+/// mpc-autofill order XML) to an already-built zip's raw bytes, without
+/// re-compressing the existing entries -- lets callers bundle everything
+/// into one downloadable/writable file instead of saving several files
+/// separately.
+pub fn append_files_to_zip(zip_bytes: Vec<u8>, extra_files: &[(&str, &[u8])]) -> Result<Vec<u8>> {
+    let archive = ZipArchive::new(Cursor::new(zip_bytes))?;
+
+    let mut buffer = Cursor::new(Vec::new());
+    let mut writer = ZipWriter::new(&mut buffer);
+    writer.merge_archive(archive)?;
+
+    let zip_options =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, contents) in extra_files {
+        writer.start_file(*name, zip_options)?;
+        writer.write_all(contents)?;
+    }
+    writer.finish()?;
+
+    Ok(buffer.into_inner())
 }
 
 /// Everything needed, once every image in a side has actually been written

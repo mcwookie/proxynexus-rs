@@ -457,27 +457,6 @@ fn write_manifest_files(printings: &[Printing], output_path: &Path) -> anyhow::R
     Ok(())
 }
 
-/// Writes an mpc-autofill order XML alongside `output_path`, so unzipping
-/// the MPC ZIP and dropping this file in the same folder lets mpc-autofill
-/// (https://github.com/chilli-axe/mpc-autofill) fill the whole order --
-/// front/back pairing, cardstock, and foil -- without manual setup.
-fn write_mpc_autofill_xml(xml: &str, output_path: &Path) -> anyhow::Result<()> {
-    let stem = output_path
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "output".to_string());
-    let dir = output_path.parent().filter(|p| !p.as_os_str().is_empty());
-    let xml_path = match dir {
-        Some(dir) => dir.join(format!("{}_mpc_autofill.xml", stem)),
-        None => PathBuf::from(format!("{}_mpc_autofill.xml", stem)),
-    };
-
-    std::fs::write(&xml_path, xml)
-        .with_context(|| format!("Failed to write mpc-autofill order XML to {:?}", xml_path))?;
-    println!("mpc-autofill order XML written: {:?}", xml_path);
-    Ok(())
-}
-
 async fn handle_generate(
     db: &mut DbStorage,
     game: &str,
@@ -550,8 +529,16 @@ async fn handle_generate(
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
-            write_manifest_files(&printings, &output_path)
-                .context("Failed to write card back manifest")?;
+
+            // Manifest CSV/JSON and the mpc-autofill order XML get bundled
+            // into the same ZIP as the card images below instead of being
+            // written as separate files alongside it -- so build the
+            // manifest content here rather than via write_manifest_files
+            // (which writes straight to disk, used by the PDF path above).
+            let manifest_entries = build_manifest(&printings);
+            let manifest_csv = manifest_to_csv(&manifest_entries);
+            let manifest_json =
+                manifest_to_json(&manifest_entries).context("Failed to serialize manifest JSON")?;
 
             let card_backs = if let Some(adapter) = get_card_back_adapter(game) {
                 adapter.fetch_card_backs().await.unwrap_or_default()
@@ -576,13 +563,27 @@ async fn handle_generate(
                     foil,
                 },
             );
-            write_mpc_autofill_xml(&autofill_xml, &output_path)
-                .context("Failed to write mpc-autofill order XML")?;
 
-            std::fs::write(&output_path, mpc_output.zip_bytes)
+            let combined_zip = proxynexus_core::mpc::append_files_to_zip(
+                mpc_output.zip_bytes,
+                &[
+                    (
+                        "proxynexus_export_mpc_autofill.xml",
+                        autofill_xml.as_bytes(),
+                    ),
+                    ("proxynexus_export_manifest.csv", manifest_csv.as_bytes()),
+                    ("proxynexus_export_manifest.json", manifest_json.as_bytes()),
+                ],
+            )
+            .context("Failed to bundle manifest/xml into MPC zip")?;
+
+            std::fs::write(&output_path, combined_zip)
                 .with_context(|| format!("Failed to write ZIP to {:?}", output_path))?;
             info!("runtime: {:?}", start.elapsed());
-            println!("MPC ZIP created successfully: {:?}", output_path);
+            println!(
+                "MPC ZIP created successfully (includes manifest CSV/JSON and mpc-autofill XML): {:?}",
+                output_path
+            );
             Ok(())
         }
         GenerateType::Bleed { input_dir } => {
