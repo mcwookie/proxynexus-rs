@@ -37,12 +37,10 @@ impl GameAdapterInfo for WhiAdapter {
     }
 }
 
-/// Unlike Arkham Horror LCG (co-op, player deck + encounter deck) or Marvel
-/// Champions (player deck + villain/encounter decks), Warhammer Invasion is
-/// a symmetric two-player faction game -- every card, regardless of type or
+/// Warhammer Invasion is a symmetric two-player
+///  faction game -- every card, regardless of type or
 /// faction, uses the same single generic card back. So there's no
-/// per-card classification needed here (contrast with each of those
-/// adapters' own `back_type_for`): every `Card` just gets this one
+/// per-card classification needed.  Every `Card` just gets this one
 /// constant, which must stay a substring of the filename registered in
 /// `WhiAdapter::fetch_card_backs` below for `mpc.rs`'s generic-back
 /// fallback matching to find it.
@@ -90,11 +88,14 @@ fn build_cards_and_versions(
 #[async_trait]
 impl CatalogProvider for WhiAdapter {
     async fn fetch_catalog(&self) -> Result<Catalog> {
-        let whi_packs = fetch_packs().await?;
-        // whi_full.json is one bulk file covering every card in every pack
-        // (unlike ArkhamDB/MarvelCDB's per-pack REST APIs), so this is a
-        // single request regardless of how many packs exist.
-        let whi_cards = fetch_all_cards().await?;
+
+        // Load all packs (sets/expansions). All data is stored in a 
+        // single JSON file.
+        let whi_packs = Ok(serde_json::from_str(include_str!("whi_packs.json"))?);
+        
+        // Load every card across every pack. `whi_full.json` is one bulk 
+        // file covering the whole catalog.
+        let whi_cards = Ok(serde_json::from_str(include_str!("whi_full.json"))?);
 
         let packs: Vec<Pack> = whi_packs
             .into_iter()
@@ -218,8 +219,7 @@ mod tests {
 
     #[test]
     fn every_card_gets_the_same_generic_back_type_regardless_of_type() {
-        // Unlike ahlcg/marvel_champions, this game has no player/encounter
-        // split -- every card_type should classify identically.
+        // Every card_type should classify identically.
         let raw = vec![
             card("a", "Unit", "Orc"),
             card("b", "Quest", "Dwarf"),
