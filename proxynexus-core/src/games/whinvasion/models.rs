@@ -81,5 +81,3 @@ where
     }
 }
 
-// There isn't currently a decklist source for Warhammer Invasion, so no
-// WhiDecklist type exists yet -- see api.rs's fetch_decklist_from_url.
