@@ -5,7 +5,7 @@ use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 use crate::error::Result;
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::games::whinvasion::api::{fetch_all_cards, fetch_packs};
+use crate::games::whinvasion::models::{WhiCard, WhiPack};
 use crate::mpc::CardBackProvider;
 use async_trait::async_trait;
 
@@ -88,14 +88,13 @@ fn build_cards_and_versions(
 #[async_trait]
 impl CatalogProvider for WhiAdapter {
     async fn fetch_catalog(&self) -> Result<Catalog> {
-
-        // Load all packs (sets/expansions). All data is stored in a 
+        // Load all packs (sets/expansions). All data is stored in a
         // single JSON file.
-        let whi_packs = Ok(serde_json::from_str(include_str!("whi_packs.json"))?);
-        
-        // Load every card across every pack. `whi_full.json` is one bulk 
+        let whi_packs: Vec<WhiPack> = serde_json::from_str(include_str!("whi_packs.json"))?;
+
+        // Load every card across every pack. `whi_full.json` is one bulk
         // file covering the whole catalog.
-        let whi_cards = Ok(serde_json::from_str(include_str!("whi_full.json"))?);
+        let whi_cards: Vec<WhiCard> = serde_json::from_str(include_str!("whi_full.json"))?;
 
         let packs: Vec<Pack> = whi_packs
             .into_iter()

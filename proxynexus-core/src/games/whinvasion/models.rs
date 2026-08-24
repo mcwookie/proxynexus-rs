@@ -21,7 +21,7 @@ pub struct WhiPack {
     pub available: Option<String>,
 }
 
-/// A card from `whi_full.json` -- a single bulk file covering 
+/// A card from `whi_full.json` -- a single bulk file covering
 /// every card in every pack, fetched once rather than per-pack.
 /// Each `WhiCard` maps 1:1 to one physical card with one generic back.
 ///
@@ -76,4 +76,3 @@ where
         Some(s) => s.parse::<i64>().map(Some).map_err(serde::de::Error::custom),
     }
 }
-
