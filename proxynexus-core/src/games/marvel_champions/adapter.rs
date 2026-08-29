@@ -2,11 +2,12 @@
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::Result;
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::marvel_champions::api::{fetch_all_cards, fetch_packs};
-use crate::mpc::CardBackProvider;
+#[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
 
 pub struct MarvelChampionsAdapter {}
@@ -87,7 +88,7 @@ const ENCOUNTER_TYPES: &[&str] = &[
 ];
 
 #[cfg(not(target_arch = "wasm32"))]
-fn back_type_for(type_code: &str) -> Option<String> {
+fn back_group_for(type_code: &str) -> Option<String> {
     if PLAYER_TYPES.contains(&type_code) {
         Some("player".to_string())
     } else if VILLAIN_TYPES.contains(&type_code) {
@@ -108,20 +109,19 @@ fn back_type_for(type_code: &str) -> Option<String> {
 /// `double_sided: false` flag on both sides is misleading here; the real
 /// signal is `hidden` (see `McdbCard::hidden`'s doc comment) -- the hidden
 /// side must not get its own Card/CardVersion or show up independently in
-/// search/generation, only as `linked_card_*` metadata on its visible
-/// counterpart (mirrors how the `ahlcg` adapter treats a linked_to_code
-/// pair like Carl Sanford/71034b). Needed a live scan to confirm scope
-/// before trusting this: 69 hero cards across the whole catalog carry a
-/// `back_link`, all following this shape.
+/// search/generation. Needed a live scan to confirm scope before trusting
+/// this: 69 hero cards across the whole catalog carry a `back_link`, all
+/// following this shape.
+///
+/// TODO: `card.back_link` itself isn't represented yet under the new
+/// back_group/CardSide model (it used to only feed `linked_card_*`
+/// metadata, dropped along with the rest of that struct). The actual back
+/// *image* still resolves fine regardless, via the existing
+/// `{card_id}@{pack_id}~back` filename convention.
 #[cfg(not(target_arch = "wasm32"))]
 fn build_cards_and_versions(
     mcdb_cards: &[crate::games::marvel_champions::models::McdbCard],
 ) -> (Vec<Card>, Vec<CardVersion>) {
-    let by_code: std::collections::HashMap<
-        &str,
-        &crate::games::marvel_champions::models::McdbCard,
-    > = mcdb_cards.iter().map(|c| (c.code.as_str(), c)).collect();
-
     let mut cards = Vec::with_capacity(mcdb_cards.len());
     let mut card_versions = Vec::with_capacity(mcdb_cards.len());
 
@@ -130,21 +130,11 @@ fn build_cards_and_versions(
             continue;
         }
 
-        let linked = card
-            .back_link
-            .as_deref()
-            .and_then(|code| by_code.get(code))
-            .copied();
-
         cards.push(Card {
             id: card.code.clone(),
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
-            side: Some(card.faction_code.clone()),
-            back_type: back_type_for(&card.type_code),
-            linked_card_code: linked.map(|l| l.code.clone()),
-            linked_card_name: linked.map(|l| l.name.clone()),
-            linked_card_back_type: linked.and_then(|l| back_type_for(&l.type_code)),
+            back_group: back_group_for(&card.type_code),
         });
 
         card_versions.push(CardVersion {
@@ -152,6 +142,7 @@ fn build_cards_and_versions(
             pack_id: card.pack_code.clone(),
             quantity: card.quantity.unwrap_or(1),
             position: Some(card.position),
+            api_id: None,
         });
     }
 
@@ -187,62 +178,6 @@ impl CatalogProvider for MarvelChampionsAdapter {
             cards,
             card_versions,
         })
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl CardBackProvider for MarvelChampionsAdapter {
-    async fn fetch_card_backs(&self) -> Result<Vec<(String, Vec<u8>)>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Ok(vec![
-                (
-                    "marvel_champions_player_back.png".to_string(),
-                    include_bytes!("../../../assets/marvel_champions_player_back.png").to_vec(),
-                ),
-                (
-                    "marvel_champions_encounter_back.png".to_string(),
-                    include_bytes!("../../../assets/marvel_champions_encounter_back.png").to_vec(),
-                ),
-                (
-                    "marvel_champions_villain_back.png".to_string(),
-                    include_bytes!("../../../assets/marvel_champions_villain_back.png").to_vec(),
-                ),
-            ])
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            use futures::future::join_all;
-            use gloo_net::http::Request;
-
-            let filenames = [
-                "marvel_champions_player_back.png",
-                "marvel_champions_encounter_back.png",
-                "marvel_champions_villain_back.png",
-            ];
-
-            let fetch_futures = filenames.iter().map(|filename| async move {
-                let url = format!("card_backs/{}", filename);
-                let response = Request::get(&url).send().await?;
-
-                if !response.ok() {
-                    return Err(crate::error::ProxyNexusError::Internal(format!(
-                        "Failed to fetch {}: HTTP {}",
-                        url,
-                        response.status()
-                    )));
-                }
-
-                let bytes = response.binary().await?;
-
-                Ok((filename.to_string(), bytes))
-            });
-
-            let results: Vec<Result<(String, Vec<u8>)>> = join_all(fetch_futures).await;
-            results.into_iter().collect()
-        }
     }
 }
 
@@ -327,33 +262,16 @@ mod tests {
     }
 
     #[test]
-    fn visible_hero_side_carries_linked_card_metadata_from_its_alter_ego() {
+    fn hero_and_encounter_cards_get_the_correct_back_group() {
         let raw = vec![
             hero("26001a", "Vision", "26001b"),
-            alter_ego("26001b", "Vision", "26001a"),
+            plain_encounter_card("01140", "Ultron Drones"),
         ];
-        let (cards, _) = build_cards_and_versions(&raw);
-
-        let vision = &cards[0];
-        assert_eq!(vision.linked_card_code.as_deref(), Some("26001b"));
-        assert_eq!(vision.linked_card_name.as_deref(), Some("Vision"));
-        // alter_ego is in PLAYER_TYPES, same as hero -- both sides need the
-        // player back, so this is expected to agree with vision.back_type,
-        // not disagree the way Carl Sanford's does in ahlcg.
-        assert_eq!(vision.linked_card_back_type.as_deref(), Some("player"));
-        assert_eq!(vision.back_type.as_deref(), Some("player"));
-    }
-
-    #[test]
-    fn card_with_no_back_link_gets_no_linked_card_metadata() {
-        let raw = vec![plain_encounter_card("01140", "Ultron Drones")];
         let (cards, versions) = build_cards_and_versions(&raw);
 
-        assert_eq!(cards.len(), 1);
-        assert_eq!(versions.len(), 1);
-        assert_eq!(cards[0].linked_card_code, None);
-        assert_eq!(cards[0].linked_card_name, None);
-        assert_eq!(cards[0].linked_card_back_type, None);
-        assert_eq!(cards[0].back_type.as_deref(), Some("encounter"));
+        assert_eq!(cards.len(), 2);
+        assert_eq!(versions.len(), 2);
+        assert_eq!(cards[0].back_group.as_deref(), Some("player"));
+        assert_eq!(cards[1].back_group.as_deref(), Some("encounter"));
     }
 }

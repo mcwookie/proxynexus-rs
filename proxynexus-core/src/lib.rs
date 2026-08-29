@@ -1,3 +1,4 @@
+pub mod card_backs;
 pub mod card_source;
 pub mod card_store;
 #[cfg(not(target_arch = "wasm32"))]
@@ -8,9 +9,9 @@ pub mod collection_builder;
 pub mod collection_manager;
 pub mod db_storage;
 pub mod error;
+pub mod file_naming;
 pub mod games;
 pub mod image_provider;
-pub mod manifest;
 pub mod models;
 pub mod mpc;
 pub mod pdf;

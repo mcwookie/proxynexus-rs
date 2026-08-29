@@ -20,6 +20,7 @@ use components::about_modal::AboutModal;
 use components::export_controls::ExportControls;
 use components::preview_grid::PreviewGrid;
 use components::print_layout_info::PrintLayoutInfo;
+use components::sides_info::SidesInfo;
 use components::source_selector::{ActiveSource, SourceSelector};
 use components::upscale_info::UpscaleInfo;
 use components::variant_selector::{VariantSelector, VariantSelectorState};
@@ -279,12 +280,7 @@ fn copy_selection_to_clipboard(game_id: &str, printings: &[Printing]) {
     };
 
     for p in printings {
-        let p_display = p
-            .pack_id
-            .as_deref()
-            .or(p.variant.as_deref())
-            .unwrap_or("official");
-        let variant_str = format!("{}:{}", p_display, p.collection);
+        let variant_str = p.variant_key();
 
         if p.card_title == current_title && variant_str == current_variant {
             current_count += 1;
@@ -419,6 +415,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let mut is_about_open = use_signal(|| false);
     let mut show_copy_toast = use_signal(|| false);
     let mut print_layout_info_pos = use_signal(|| None::<(f64, f64, f64)>);
+    let mut sides_info_pos = use_signal(|| None::<(f64, f64, f64)>);
     let mut upscale_info_pos = use_signal(|| None::<(f64, f64, f64)>);
 
     use_effect(move || {
@@ -679,11 +676,11 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                         }
                     }
                     div {
-                        class: "flex items-center gap-3",
+                        class: "flex items-center gap-2",
                         if let Some(Ok((_, resolved_printing, _, _))) = ordered_printings.read().as_ref() {
                             if !resolved_printing.is_empty() {
                                 button {
-                                    class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0 transition-colors group",
+                                    class: "px-2 py-1 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 flex-shrink-0 whitespace-nowrap",
                                     onclick: move |_| {
                                         if let Some(game_id) = active_game_id() {
                                             let printings_clone = if let Some(Ok((_, resolved_printing, _, _))) = ordered_printings.read().as_ref() {
@@ -693,6 +690,7 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                                             };
 
                                             copy_selection_to_clipboard(&game_id, &printings_clone);
+                                            analytics::send_event("copy_link_clicked");
                                             show_copy_toast.set(true);
                                             spawn(async move {
                                                 sleep(2000).await;
@@ -700,37 +698,19 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                                             });
                                         }
                                     },
-                                    title: "Copy Selection URL",
-                                    svg {
-                                        class: "w-5 h-5",
-                                        fill: "none",
-                                        stroke: "currentColor",
-                                        view_box: "0 0 24 24",
-                                        stroke_width: "2",
-                                        stroke_linecap: "round",
-                                        stroke_linejoin: "round",
-                                        path { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }
-                                        path { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }
-                                    }
+                                    title: "Copy a link to the current card and variant selection",
+                                    "Copy Link"
                                 }
                             }
                         }
                         button {
-                            class: "text-gray-400 hover:text-gray-600 focus:outline-none flex-shrink-0",
-                            onclick: move |_| is_about_open.set(true),
+                            class: "px-2 py-1 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 flex-shrink-0 whitespace-nowrap",
+                            onclick: move |_| {
+                                analytics::send_event("about_clicked");
+                                is_about_open.set(true);
+                            },
                             title: "About Proxy Nexus",
-                            svg {
-                                class: "w-6 h-6",
-                                fill: "none",
-                                stroke: "currentColor",
-                                view_box: "0 0 24 24",
-                                stroke_width: "2",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                                circle { cx: "12", cy: "12", r: "10" }
-                                path { d: "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" }
-                                path { d: "M12 17h.01" }
-                            }
+                            "About"
                         }
                     }
                 }
@@ -749,6 +729,8 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                     is_disabled: is_generate_disabled,
                     on_open_info: move |pos| print_layout_info_pos.set(Some(pos)),
                     on_open_upscale_info: move |pos| upscale_info_pos.set(Some(pos)),
+                    on_open_sides_info: move |pos| sides_info_pos.set(Some(pos)),
+                    active_game_id,
                     on_generate: move |options: export::ExportOptions| {
                         let source = active_source();
                         if let Some(game_id) = active_game_id() {
@@ -778,6 +760,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 PrintLayoutInfo {
                     pos,
                     on_close: move |_| print_layout_info_pos.set(None),
+                }
+            }
+
+            if let Some(pos) = sides_info_pos() {
+                SidesInfo {
+                    pos,
+                    on_close: move |_| sides_info_pos.set(None),
                 }
             }
 

@@ -1,10 +1,11 @@
 use crate::card_source::{CardSource, Cardlist, SetName};
 use crate::db_storage::{DbStorage, build_in_clause, quote_sql_string};
 use crate::error::{ProxyNexusError, Result};
-use crate::models::{CardRequest, Decklist, Printing, PrintingPart, ResolvedCardRequests};
+use crate::file_naming::back_index;
+use crate::models::{CardRequest, CardSide, Decklist, Printing, ResolvedCardRequests};
 use gluesql::FromGlueRow;
 use gluesql::core::row_conversion::SelectExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::string::String;
 use tracing::warn;
 
@@ -18,11 +19,24 @@ struct PackRow {
 }
 
 #[derive(FromGlueRow)]
+struct PackVersionRow {
+    pack_id: String,
+    version_id: String,
+    card_id: String,
+}
+
+#[derive(FromGlueRow)]
+struct PrintedCardRow {
+    card_id: String,
+}
+
+#[derive(FromGlueRow)]
 struct CardNameRow {
     id: String,
     title: String,
     pack_id: String,
     title_normalized: String,
+    position: Option<i64>,
 }
 
 #[derive(FromGlueRow)]
@@ -31,6 +45,7 @@ struct CardRequestRow {
     title: String,
     quantity: i64,
     pack_id: String,
+    position: Option<i64>,
 }
 
 #[derive(FromGlueRow)]
@@ -45,16 +60,13 @@ struct AvailablePrintingRow {
     is_official: bool,
     variant: Option<String>,
     file_path: String,
-    part: String,
-    name: String,
     side: String,
+    name: String,
+    back_group: String,
     pack_id: Option<String>,
     has_bleed: bool,
     date_release: Option<String>,
-    back_type: Option<String>,
-    linked_card_code: Option<String>,
-    linked_card_name: Option<String>,
-    linked_card_back_type: Option<String>,
+    position: Option<i64>,
 }
 
 #[derive(Hash, PartialEq, Eq, Debug)]
@@ -64,6 +76,27 @@ struct PrintingGroupKey {
     variant: Option<String>,
     collection_name: String,
     pack_id: Option<String>,
+    position: Option<i64>,
+}
+
+/// A pack, and what the loaded collections can print of it.
+///
+/// `printable` counts cards, not images. A card prints from any printing of
+/// itself, so a pack holding none of its own images is still printable in full
+/// when the sets around it carry the same cards -- which is most of the revised
+/// line. Availability has to be asked as "can these cards print", not "does
+/// this pack own images".
+#[derive(Clone, Debug, PartialEq)]
+pub struct AvailablePack {
+    pub name: String,
+    pub id: String,
+    pub date_release: Option<String>,
+    /// Cards the pack prints.
+    pub total: i64,
+    /// Of those, the ones some collection holds an image of.
+    pub printable: i64,
+    /// `"12 in nr-nsg"` per collection, counting only the pack's own images.
+    pub collections: Vec<String>,
 }
 
 pub fn normalize_title(title: &str) -> String {
@@ -112,7 +145,7 @@ pub struct CardStore<'a> {
     pub active_game_id: String,
 }
 
-type CardOverride<'a> = (&'a str, Option<String>, Option<String>);
+type CardOverride<'a> = (&'a str, Option<String>, Option<i64>, Option<String>);
 
 impl<'a> CardStore<'a> {
     pub fn new(db: &'a mut DbStorage, active_game_id: String) -> Result<Self> {
@@ -146,7 +179,7 @@ impl<'a> CardStore<'a> {
         &mut self,
         text: &str,
     ) -> Result<ResolvedCardRequests> {
-        type CardlistEntry<'a> = (&'a str, u32, Option<String>, Option<String>);
+        type CardlistEntry<'a> = (&'a str, u32, Option<String>, Option<i64>, Option<String>);
         let mut entries: Vec<CardlistEntry> = Vec::new();
 
         for line in text.lines() {
@@ -156,10 +189,11 @@ impl<'a> CardStore<'a> {
             }
 
             let (qty, rest) = Self::parse_quantity(line);
-            let (name, printing_pref, collection_pref) = Self::parse_overrides(rest)?;
+            let (name, printing_pref, position_pref, collection_pref) =
+                Self::parse_overrides(rest)?;
 
             let name = clean_card_name(name);
-            entries.push((name, qty, printing_pref, collection_pref));
+            entries.push((name, qty, printing_pref, position_pref, collection_pref));
         }
 
         if entries.is_empty() {
@@ -171,7 +205,7 @@ impl<'a> CardStore<'a> {
 
         let mut requests = Vec::new();
 
-        for (name, qty, printing, collection) in entries {
+        for (name, qty, printing, position, collection) in entries {
             if let Some((code, title, resolved_pack_code)) = resolved_cards.get(name) {
                 requests.extend(std::iter::repeat_n(
                     CardRequest {
@@ -181,6 +215,7 @@ impl<'a> CardStore<'a> {
                             .clone()
                             .or_else(|| Some(resolved_pack_code.clone())),
                         collection: collection.clone(),
+                        position,
                     },
                     qty as usize,
                 ));
@@ -236,12 +271,29 @@ impl<'a> CardStore<'a> {
                 })
                 .collect();
 
-            let printing = parts.first().cloned().flatten();
-            let collection = parts.get(1).cloned().flatten();
+            let (printing, position, collection) = match parts.as_slice() {
+                [printing] => (printing.clone(), None, None),
+                [printing, position] => (
+                    printing.clone(),
+                    position.as_deref().and_then(|p| p.parse::<i64>().ok()),
+                    None,
+                ),
+                [printing, position, collection] => (
+                    printing.clone(),
+                    position.as_deref().and_then(|p| p.parse::<i64>().ok()),
+                    collection.clone(),
+                ),
+                _ => {
+                    return Err(ProxyNexusError::Internal(format!(
+                        "Card override '{}' has too many ':'-separated parts",
+                        inner
+                    )));
+                }
+            };
 
-            Ok((name, printing, collection))
+            Ok((name, printing, position, collection))
         } else {
-            Ok((text.trim(), None, None))
+            Ok((text.trim(), None, None, None))
         }
     }
 
@@ -263,11 +315,12 @@ impl<'a> CardStore<'a> {
         let in_clause = build_in_clause(unique_normalized_name);
 
         let query = format!(
-            "SELECT 
-                c.api_id as id, 
-                c.title, 
-                p.api_id as pack_id, 
-                c.title_normalized
+            "SELECT
+                c.api_id as id,
+                c.title,
+                p.api_id as pack_id,
+                c.title_normalized,
+                v.position
              FROM cards c
              JOIN card_versions v ON c.id = v.card_id
              JOIN packs p ON v.pack_id = p.id
@@ -275,7 +328,8 @@ impl<'a> CardStore<'a> {
                AND c.game_id = {}
              ORDER BY
                  CASE WHEN p.date_release IS NULL THEN 1 ELSE 0 END,
-                 p.date_release DESC",
+                 p.date_release DESC,
+                 c.api_id",
             in_clause,
             quote_sql_string(&self.active_game_id)
         );
@@ -308,8 +362,8 @@ impl<'a> CardStore<'a> {
         Ok((title_to_card, not_found))
     }
 
-    pub async fn get_available_packs(&mut self) -> Result<Vec<(String, String, String)>> {
-        let query = format!(
+    pub async fn get_available_packs(&mut self) -> Result<Vec<AvailablePack>> {
+        let own_images_q = format!(
             "SELECT
                 p.name as pack_name,
                 p.id as pack_id,
@@ -325,12 +379,51 @@ impl<'a> CardStore<'a> {
             quote_sql_string(&self.active_game_id)
         );
 
-        let payloads = self.db.execute(&query).await?;
+        let versions_q = format!(
+            "SELECT p.id as pack_id, v.id as version_id, v.card_id as card_id
+             FROM packs p
+             JOIN card_versions v ON v.pack_id = p.id
+             WHERE p.game_id = {}",
+            quote_sql_string(&self.active_game_id)
+        );
+        let printed_q = format!(
+            "SELECT pr.card_id as card_id
+             FROM printings pr
+             JOIN cards c ON pr.card_id = c.id
+             WHERE c.game_id = {}",
+            quote_sql_string(&self.active_game_id)
+        );
+
+        let printed: HashSet<String> = match self.db.execute(&printed_q).await?.into_iter().next() {
+            Some(payload) => payload
+                .rows_as::<PrintedCardRow>()?
+                .into_iter()
+                .map(|row| row.card_id)
+                .collect(),
+            None => HashSet::new(),
+        };
+
+        let mut totals: HashMap<String, (i64, i64)> = HashMap::new();
+        let mut seen_versions: HashSet<String> = HashSet::new();
+        if let Some(payload) = self.db.execute(&versions_q).await?.into_iter().next() {
+            for row in payload.rows_as::<PackVersionRow>()? {
+                if !seen_versions.insert(row.version_id) {
+                    continue;
+                }
+                let entry = totals.entry(row.pack_id).or_insert((0, 0));
+                entry.0 += 1;
+                if printed.contains(&row.card_id) {
+                    entry.1 += 1;
+                }
+            }
+        }
+
+        let payloads = self.db.execute(&own_images_q).await?;
 
         struct PackGroup {
             id: String,
             name: String,
-            date_release: String,
+            date_release: Option<String>,
             collections: Vec<String>,
         }
 
@@ -340,7 +433,7 @@ impl<'a> CardStore<'a> {
             let pack_rows = payload.rows_as::<PackRow>()?;
 
             for row in pack_rows {
-                let date_release = row.date_release.unwrap_or_default();
+                let date_release = row.date_release;
 
                 let entry = pack_data
                     .entry(row.pack_id.clone())
@@ -372,26 +465,29 @@ impl<'a> CardStore<'a> {
         // fully deterministic regardless of HashMap iteration order, as
         // long as no two packs share both the same date and name.
         let mut sorted_packs: Vec<_> = pack_data.into_values().collect();
-        sorted_packs.sort_by(|a, b| (&a.date_release, &a.name).cmp(&(&b.date_release, &b.name)));
+        sorted_packs.sort_by(|a, b| {
+            a.date_release
+                .is_none()
+                .cmp(&b.date_release.is_none())
+                .then_with(|| b.date_release.cmp(&a.date_release))
+                .then_with(|| a.name.cmp(&b.name))
+        });
 
-        let mut results = Vec::new();
-
-        for mut pack in sorted_packs {
-            pack.collections.sort();
-            let meta = if pack.collections.is_empty() {
-                None
-            } else {
-                Some(pack.collections.join(", "))
-            };
-
-            let display_meta = meta
-                .map(|m| format!("# {}", m))
-                .unwrap_or_else(|| "# no printings available".to_string());
-
-            results.push((pack.name, pack.id, display_meta));
-        }
-
-        Ok(results)
+        Ok(sorted_packs
+            .into_iter()
+            .map(|mut pack| {
+                pack.collections.sort();
+                let (total, printable) = totals.get(&pack.id).copied().unwrap_or((0, 0));
+                AvailablePack {
+                    name: pack.name,
+                    id: pack.id,
+                    date_release: pack.date_release,
+                    total,
+                    printable,
+                    collections: pack.collections,
+                }
+            })
+            .collect())
     }
 
     async fn get_card_requests_from_set_name(
@@ -399,7 +495,7 @@ impl<'a> CardStore<'a> {
         set_name: &str,
     ) -> Result<Vec<CardRequest>> {
         let query = format!(
-            "SELECT c.api_id as id, c.title, v.quantity, p.api_id as pack_id
+            "SELECT c.api_id as id, c.title, v.quantity, p.api_id as pack_id, v.position
              FROM cards c
              JOIN card_versions v ON c.id = v.card_id
              JOIN packs p ON v.pack_id = p.id
@@ -423,6 +519,7 @@ impl<'a> CardStore<'a> {
                         id: row.id,
                         printing: Some(row.pack_id),
                         collection: None,
+                        position: row.position,
                     },
                     row.quantity as usize,
                 ));
@@ -448,59 +545,109 @@ impl<'a> CardStore<'a> {
         }
 
         let card_ids: HashSet<&String> = decklist.cards.iter().map(|e| &e.card_id).collect();
+        let packs: HashSet<&String> = decklist
+            .cards
+            .iter()
+            .filter_map(|e| e.pack_id.as_ref())
+            .collect();
         let in_clause = build_in_clause(card_ids);
+        let pack_clause = if packs.is_empty() {
+            String::new()
+        } else {
+            format!(" OR p.api_id IN ({})", build_in_clause(packs))
+        };
 
         let query = format!(
-            "SELECT 
-                c.api_id as id, 
-                c.title, 
-                p.api_id as pack_id, 
-                c.title_normalized
+            "SELECT
+                c.api_id as id,
+                c.title,
+                p.api_id as pack_id,
+                c.title_normalized,
+                v.position
              FROM cards c
              JOIN card_versions v ON c.id = v.card_id
              JOIN packs p ON v.pack_id = p.id
-             WHERE (c.api_id IN ({0}) OR c.title_normalized IN ({0}))
-               AND c.game_id = {1}",
+             WHERE (c.api_id IN ({0}) OR c.title_normalized IN ({0}){1})
+               AND c.game_id = {2}
+             ORDER BY c.api_id",
             in_clause,
+            pack_clause,
             quote_sql_string(&self.active_game_id)
         );
 
         let payloads = self.db.execute(&query).await?;
         let mut resolved_by_id = HashMap::new();
-        let mut resolved_by_norm_pack = HashMap::new();
+        let mut resolved_by_pack_position = HashMap::new();
+        let mut rows_by_pack: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
         let mut resolved_by_norm = HashMap::new();
 
         if let Some(payload) = payloads.into_iter().next() {
-            let card_rows = payload.rows_as::<CardNameRow>()?;
-            for row in card_rows {
-                resolved_by_id.insert(row.id.clone(), (row.id.clone(), row.title.clone()));
-                resolved_by_norm_pack.insert(
-                    (row.title_normalized.clone(), row.pack_id.clone()),
-                    (row.id.clone(), row.title.clone()),
-                );
-                resolved_by_norm.insert(row.title_normalized.clone(), (row.id, row.title));
+            for row in payload.rows_as::<CardNameRow>()? {
+                let card = (row.id.clone(), row.title.clone());
+                resolved_by_id.entry(row.id.clone()).or_insert(card.clone());
+                if let Some(pos) = row.position {
+                    resolved_by_pack_position
+                        .entry((row.pack_id.clone(), pos))
+                        .or_insert(card.clone());
+                }
+                rows_by_pack.entry(row.pack_id.clone()).or_default().push((
+                    row.id.clone(),
+                    row.title.clone(),
+                    row.title_normalized.clone(),
+                ));
+                resolved_by_norm
+                    .entry(row.title_normalized.clone())
+                    .or_insert(card);
             }
         }
+
+        // Matches a deck's plain name against stored titles, handling the unique suffix.
+        // More than one match falls back to position.
+        let name_in_pack = |pack: &String, name: &str| -> Option<(String, String)> {
+            let boundary = format!("{}__", name);
+            let mut matched: Option<(String, String)> = None;
+            for (id, title, title_normalized) in rows_by_pack.get(pack)? {
+                if title_normalized == name || title_normalized.starts_with(&boundary) {
+                    match &matched {
+                        Some((prev_id, _)) if prev_id != id => return None,
+                        _ => matched = Some((id.clone(), title.clone())),
+                    }
+                }
+            }
+            matched
+        };
 
         let mut requests = Vec::new();
         let mut not_found = Vec::new();
         for entry in &decklist.cards {
-            let matched = resolved_by_id
-                .get(&entry.card_id)
-                .or_else(|| {
-                    entry.pack_id.as_ref().and_then(|pack| {
-                        resolved_by_norm_pack.get(&(entry.card_id.clone(), pack.clone()))
-                    })
-                })
-                .or_else(|| resolved_by_norm.get(&entry.card_id));
+            let by_exact_id = resolved_by_id.get(&entry.card_id).cloned();
+            let by_unique_name_in_pack = entry
+                .pack_id
+                .as_ref()
+                .and_then(|pack| name_in_pack(pack, &entry.card_id));
+            let by_pack_and_position =
+                entry
+                    .pack_id
+                    .as_ref()
+                    .zip(entry.position)
+                    .and_then(|(pack, pos)| {
+                        resolved_by_pack_position.get(&(pack.clone(), pos)).cloned()
+                    });
+            let by_normalized_title = resolved_by_norm.get(&entry.card_id).cloned();
+
+            let matched = by_exact_id
+                .or(by_unique_name_in_pack)
+                .or(by_pack_and_position)
+                .or(by_normalized_title);
 
             if let Some((real_id, title)) = matched {
                 requests.extend(std::iter::repeat_n(
                     CardRequest {
-                        title: title.clone(),
-                        id: real_id.clone(),
+                        title,
+                        id: real_id,
                         printing: entry.pack_id.clone(),
                         collection: None,
+                        position: entry.position,
                     },
                     entry.quantity as usize,
                 ));
@@ -541,16 +688,13 @@ impl<'a> CardStore<'a> {
                 (p.version_id IS NOT NULL) AS is_official,
                 p.variant,
                 p.file_path,
-                p.part,
+                p.side,
                 col.name,
-                c.side,
+                c.back_group,
                 pks.api_id as pack_id,
                 p.has_bleed,
                 pks.date_release,
-                c.back_type,
-                c.linked_card_code,
-                c.linked_card_name,
-                c.linked_card_back_type
+                v.position
              FROM printings p
              JOIN cards c ON p.card_id = c.id
              JOIN collections col ON p.collection_id = col.id
@@ -590,6 +734,20 @@ impl<'a> CardStore<'a> {
         Ok(resolved_printings)
     }
 
+    fn assemble_side(rows: Vec<AvailablePrintingRow>) -> CardSide {
+        let mut side = CardSide::default();
+
+        for row in rows {
+            if row.has_bleed {
+                side.bleed_image_key = Some(row.file_path);
+            } else {
+                side.image_key = Some(row.file_path);
+            }
+        }
+
+        side
+    }
+
     fn assemble_printings(rows: Vec<AvailablePrintingRow>) -> HashMap<String, Vec<Printing>> {
         let mut resolved_printings: HashMap<String, Vec<Printing>> = HashMap::new();
         let mut groups: HashMap<PrintingGroupKey, Vec<AvailablePrintingRow>> = HashMap::new();
@@ -602,66 +760,48 @@ impl<'a> CardStore<'a> {
                 variant: row.variant.clone(),
                 collection_name: row.name.clone(),
                 pack_id: row.pack_id.clone(),
+                position: row.position,
             };
             groups.entry(key).or_default().push(row);
         }
 
         for (key, rows) in groups {
-            let mut image_key = String::new();
-            let mut bleed_image_key = None;
-            let mut parts_map: HashMap<String, PrintingPart> = HashMap::new();
-
             let first_row = &rows[0];
             let card_title = first_row.title.clone();
             let is_official = first_row.is_official;
-            let side = first_row.side.clone();
+            let back_group = first_row.back_group.clone();
             let date_release = first_row.date_release.clone();
-            let back_type = first_row.back_type.clone();
-            let linked_card_code = first_row.linked_card_code.clone();
-            let linked_card_name = first_row.linked_card_name.clone();
-            let linked_card_back_type = first_row.linked_card_back_type.clone();
 
+            let mut by_side: HashMap<String, Vec<AvailablePrintingRow>> = HashMap::new();
             for row in rows {
-                if row.part == "front" {
-                    if row.has_bleed {
-                        bleed_image_key = Some(row.file_path);
-                    } else {
-                        image_key = row.file_path;
-                    }
-                } else {
-                    let part = parts_map
-                        .entry(row.part.clone())
-                        .or_insert_with(|| PrintingPart {
-                            name: row.part.clone(),
-                            image_key: String::new(),
-                            bleed_image_key: None,
-                        });
-                    if row.has_bleed {
-                        part.bleed_image_key = Some(row.file_path);
-                    } else {
-                        part.image_key = row.file_path;
-                    }
-                }
+                by_side.entry(row.side.clone()).or_default().push(row);
             }
 
-            let parts = parts_map.into_values().collect();
+            let front = by_side
+                .remove("front")
+                .map(Self::assemble_side)
+                .unwrap_or_default();
+
+            let backs: Vec<CardSide> = by_side
+                .into_iter()
+                .filter_map(|(label, rows)| back_index(&label).map(|index| (index, rows)))
+                .collect::<BTreeMap<_, _>>()
+                .into_values()
+                .map(Self::assemble_side)
+                .collect();
 
             let printing = Printing {
                 card_title,
                 card_id: key.card_id,
                 is_official,
                 variant: key.variant,
-                image_key,
-                bleed_image_key,
-                parts,
+                front,
+                backs,
                 collection: key.collection_name,
-                side,
+                back_group,
                 pack_id: key.pack_id,
                 date_release,
-                back_type,
-                linked_card_code,
-                linked_card_name,
-                linked_card_back_type,
+                position: key.position,
             };
 
             resolved_printings
@@ -670,8 +810,20 @@ impl<'a> CardStore<'a> {
                 .push(printing);
         }
 
+        // Sorted so the earliest printing is the default choice, with ties
+        // broken deterministically: card_id separates same-title cards
+        // sharing a pack, position separates two printings of one card in
+        // one pack, variant separates alt arts of one card.
         for printings in resolved_printings.values_mut() {
-            printings.sort_by_key(|p| (p.date_release.is_none(), p.date_release.clone()));
+            printings.sort_by_key(|p| {
+                (
+                    p.date_release.is_none(),
+                    p.date_release.clone(),
+                    p.card_id.clone(),
+                    p.position,
+                    p.variant.clone(),
+                )
+            });
         }
 
         resolved_printings
@@ -711,29 +863,29 @@ impl<'a> CardStore<'a> {
     pub fn select_printing(request: &CardRequest, printings: &[Printing]) -> Result<Printing> {
         let mut candidates: Vec<&Printing> = printings.iter().collect();
 
-        // Ensure the best match (fewest misses) is at index 0.
-        //
-        // `printings` is looked up by *title*, not by the request's specific
-        // card id -- so it can contain printings from other, unrelated cards
-        // that just happen to share a normalized title (confirmed real: all
-        // 7 MarvelCDB cards literally named "Vision" -- an ally, a hero, its
-        // alter-ego, and 4 unrelated villain-form "leader" cards -- share one
-        // title bucket). Without prioritizing an exact card_id match first,
-        // this could silently resolve a request for one specific card (e.g.
-        // the alter-ego) to a completely different card's printing (e.g. the
-        // hero's, or the unrelated ally's) whenever that other printing
-        // sorted better on official-ness/date. `id_miss` must be checked
-        // before any of that.
+        // Ensure the best match (fewest misses) is at index 0
         candidates.sort_by_key(|p| {
-            let id_miss = p.card_id != request.id;
             let printing_miss = request.printing.is_some()
                 && request.printing != p.pack_id
                 && request.printing != p.variant;
 
+            let collection_miss =
+                request.collection.is_some() && request.collection.as_ref() != Some(&p.collection);
+
+            // Only relevant when a pack prints one card twice.
+            let position_miss = request.position.is_some() && request.position != p.position;
+
+            // Printings are looked up by title, which isn't always unique per
+            // card. Ranked below pack/collection because
+            // resolve_decklist_to_requests can pair a resolved id with a
+            // pack_id from elsewhere, and that pack must still win.
+            let id_miss = p.card_id != request.id;
+
             (
-                id_miss,
                 printing_miss,
-                request.collection.is_some() && request.collection.as_ref() != Some(&p.collection),
+                collection_miss,
+                position_miss,
+                id_miss,
                 !p.is_official,
                 p.date_release.is_none(),
                 p.date_release.clone(),
@@ -754,6 +906,72 @@ mod tests {
     use super::*;
     use crate::models::Printing;
 
+    fn row(side: &str, file_path: &str) -> AvailablePrintingRow {
+        AvailablePrintingRow {
+            title: "Jinteki Biotech".into(),
+            id: "jinteki_biotech".into(),
+            is_official: true,
+            variant: None,
+            file_path: file_path.into(),
+            side: side.into(),
+            name: "nr-ffg".into(),
+            back_group: "corp".into(),
+            pack_id: Some("the_valley".into()),
+            has_bleed: false,
+            date_release: None,
+            position: None,
+        }
+    }
+
+    fn only_printing(rows: Vec<AvailablePrintingRow>) -> Printing {
+        let mut assembled = CardStore::assemble_printings(rows);
+        assert_eq!(assembled.len(), 1);
+        let mut printings = assembled.drain().next().unwrap().1;
+        assert_eq!(printings.len(), 1);
+        printings.remove(0)
+    }
+
+    #[test]
+    fn backs_are_ordered_by_index_not_by_the_order_rows_arrive() {
+        let printing = only_printing(vec![
+            row("back3", "c.jpg"),
+            row("front", "f.jpg"),
+            row("back", "a.jpg"),
+            row("back2", "b.jpg"),
+        ]);
+
+        assert_eq!(printing.front.image_key.as_deref(), Some("f.jpg"));
+        assert_eq!(
+            printing
+                .backs
+                .iter()
+                .map(|back| back.image_key.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["a.jpg", "b.jpg", "c.jpg"]
+        );
+    }
+
+    #[test]
+    fn a_printing_with_no_back_rows_has_no_backs() {
+        let printing = only_printing(vec![row("front", "f.jpg")]);
+
+        assert_eq!(printing.front.image_key.as_deref(), Some("f.jpg"));
+        assert!(printing.backs.is_empty());
+    }
+
+    #[test]
+    fn the_bled_and_unbled_scans_of_one_side_land_on_the_same_side() {
+        let mut bled = row("front", "f.bleed.jpg");
+        bled.has_bleed = true;
+        let printing = only_printing(vec![row("front", "f.jpg"), bled]);
+
+        assert_eq!(printing.front.image_key.as_deref(), Some("f.jpg"));
+        assert_eq!(
+            printing.front.bleed_image_key.as_deref(),
+            Some("f.bleed.jpg")
+        );
+    }
+
     fn mock_printing(
         code: &str,
         is_official: bool,
@@ -767,18 +985,110 @@ mod tests {
             card_id: code.into(),
             is_official,
             variant: variant.map(|s| s.to_string()),
-            image_key: format!("{}.jpg", code),
-            bleed_image_key: None,
-            parts: Vec::new(),
+            front: CardSide {
+                image_key: Some(format!("{}.jpg", code)),
+                bleed_image_key: None,
+            },
+            backs: Vec::new(),
             collection: coll.into(),
-            side: "runner".into(),
+            back_group: "runner".into(),
             pack_id: pack.map(|p| p.to_string()),
             date_release: date.map(|s| s.to_string()),
-            back_type: None,
-            linked_card_code: None,
-            linked_card_name: None,
-            linked_card_back_type: None,
+            position: None,
         }
+    }
+
+    #[test]
+    fn test_select_printing_distinguishes_same_title_different_card_id() {
+        // The Nîn-in-Eilph prints three "Through the Marsh" cards: same title,
+        // same pack, same collection, different card ids and different B-sides.
+        let p1 = mock_printing(
+            "through_the_marsh_no_end_in_sight_nie",
+            true,
+            None,
+            "lotrlcg-enhanced",
+            Some("the_nin_in_eilph"),
+            Some("2014-11-20"),
+        );
+        let p2 = mock_printing(
+            "through_the_marsh_a_weary_passage_nie",
+            true,
+            None,
+            "lotrlcg-enhanced",
+            Some("the_nin_in_eilph"),
+            Some("2014-11-20"),
+        );
+        let p3 = mock_printing(
+            "through_the_marsh_a_forgotten_land_nie",
+            true,
+            None,
+            "lotrlcg-enhanced",
+            Some("the_nin_in_eilph"),
+            Some("2014-11-20"),
+        );
+        let available = vec![p1, p2, p3];
+
+        for want in [
+            "through_the_marsh_no_end_in_sight_nie",
+            "through_the_marsh_a_weary_passage_nie",
+            "through_the_marsh_a_forgotten_land_nie",
+        ] {
+            let req = CardRequest {
+                title: "Through the Marsh".into(),
+                id: want.into(),
+                printing: Some("the_nin_in_eilph".into()),
+                collection: None,
+                position: None,
+            };
+            assert_eq!(
+                CardStore::select_printing(&req, &available)
+                    .unwrap()
+                    .card_id,
+                want,
+                "asked for {want}, got a different card"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explicit_pack_request_outranks_card_id_match() {
+        // Only lotrlcg gives each pack's printing its own card id, and its
+        // decklist path can pair an id resolved from one pack with a pack_id
+        // naming another (the resolved_by_norm fallback). The pack the caller
+        // asked for must still win, or asking for a reprint silently returns
+        // the original.
+        let core = mock_printing(
+            "faramir_core",
+            true,
+            None,
+            "lotrlcg-enhanced",
+            Some("core_set"),
+            Some("2011-01-01"),
+        );
+        let starter = mock_printing(
+            "faramir_tples",
+            true,
+            None,
+            "lotrlcg-enhanced",
+            Some("two_player_limited_edition_starter"),
+            Some("2013-01-01"),
+        );
+        let available = vec![core, starter];
+
+        let req = CardRequest {
+            title: "Faramir".into(),
+            id: "faramir_tples".into(),
+            printing: Some("core_set".into()),
+            collection: None,
+            position: None,
+        };
+        assert_eq!(
+            CardStore::select_printing(&req, &available)
+                .unwrap()
+                .card_id,
+            "faramir_core",
+            "the requested pack must beat the card id carried by the request"
+        );
     }
 
     #[test]
@@ -824,6 +1134,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: Some("alt1".into()),
             collection: None,
+            position: None,
         };
         assert_eq!(
             CardStore::select_printing(&req, &available)
@@ -838,6 +1149,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: None,
             collection: Some("nsg-en".into()),
+            position: None,
         };
         assert_eq!(
             CardStore::select_printing(&req, &available)
@@ -852,6 +1164,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: Some("system_gateway".to_string()),
             collection: None,
+            position: None,
         };
         assert_eq!(
             CardStore::select_printing(&req, &available)
@@ -866,6 +1179,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: Some("missing_variant".into()),
             collection: None,
+            position: None,
         };
         let result = CardStore::select_printing(&req, &available).unwrap();
         assert_eq!(result.variant, None);
@@ -877,6 +1191,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: None,
             collection: None,
+            position: None,
         };
         let result = CardStore::select_printing(&req, &available).unwrap();
         assert_eq!(result.variant, None);
@@ -888,6 +1203,7 @@ mod tests {
             id: "sure_gamble".into(),
             printing: Some("core".into()),
             collection: Some("nsg-en".into()),
+            position: None,
         };
         let result = CardStore::select_printing(&req, &available).unwrap();
         assert_eq!(result.collection, "ffg-en");
@@ -931,12 +1247,14 @@ mod tests {
             id: "vis_hero".into(),
             printing: None,
             collection: None,
+            position: None,
         };
         let req_alter_ego = CardRequest {
             title: "Vision".into(),
             id: "vis_alter".into(),
             printing: None,
             collection: None,
+            position: None,
         };
 
         assert_eq!(
@@ -966,6 +1284,7 @@ mod tests {
             id: "1".into(),
             printing: Some("missing_variant".into()),
             collection: None,
+            position: None,
         };
         let result1 = CardStore::select_printing(&req1, &available).unwrap();
         assert!(result1.is_official);
@@ -979,9 +1298,71 @@ mod tests {
             id: "1".into(),
             printing: None,
             collection: Some("c2".into()),
+            position: None,
         };
         let result3 = CardStore::select_printing(&req3, &available2).unwrap();
         assert_eq!(result3.collection, "c2");
+    }
+
+    #[test]
+    fn test_select_printing_by_position() {
+        let gandalf_4 = Printing {
+            card_title: "Gandalf".into(),
+            card_id: "gandalf_core".into(),
+            is_official: true,
+            variant: None,
+            front: CardSide {
+                image_key: Some("gandalf_1_tples.jpg".into()),
+                bleed_image_key: None,
+            },
+            backs: Vec::new(),
+            collection: "enhanced".into(),
+            back_group: "player".into(),
+            pack_id: Some("two_player_limited_edition_starter".into()),
+            date_release: Some("2013-01-01".into()),
+            position: Some(4),
+        };
+        let gandalf_37 = Printing {
+            front: CardSide {
+                image_key: Some("gandalf_2_tples.jpg".into()),
+                bleed_image_key: None,
+            },
+            position: Some(37),
+            ..gandalf_4.clone()
+        };
+        let available = vec![gandalf_4.clone(), gandalf_37.clone()];
+
+        let req_37 = CardRequest {
+            title: "Gandalf".into(),
+            id: "gandalf_core".into(),
+            printing: Some("two_player_limited_edition_starter".into()),
+            collection: None,
+            position: Some(37),
+        };
+        assert_eq!(
+            CardStore::select_printing(&req_37, &available)
+                .unwrap()
+                .front
+                .image_key
+                .as_deref(),
+            Some("gandalf_2_tples.jpg")
+        );
+
+        let req_none = CardRequest {
+            title: "Gandalf".into(),
+            id: "gandalf_core".into(),
+            printing: Some("two_player_limited_edition_starter".into()),
+            collection: None,
+            position: None,
+        };
+        assert_eq!(
+            CardStore::select_printing(&req_none, &available)
+                .unwrap()
+                .front
+                .image_key
+                .as_deref(),
+            Some("gandalf_1_tples.jpg")
+        );
     }
 
     #[test]
@@ -1030,25 +1411,135 @@ mod tests {
 
     #[test]
     fn test_parse_overrides() {
-        // Full override
-        let (name, p, c) = CardStore::parse_overrides("Sure Gamble [alt:ffg-en]").unwrap();
+        // Printing only
+        let (name, p, pos, c) = CardStore::parse_overrides("Sure Gamble [alt]").unwrap();
         assert_eq!(name, "Sure Gamble");
         assert_eq!(p, Some("alt".into()));
-        assert_eq!(c, Some("ffg-en".into()));
-
-        // Partial, printing only
-        let (_, p, c) = CardStore::parse_overrides("Sure Gamble [alt]").unwrap();
-        assert_eq!(p, Some("alt".into()));
+        assert_eq!(pos, None);
         assert_eq!(c, None);
 
-        // Partial, skipped slots
-        let (_, p, c) = CardStore::parse_overrides("Sure Gamble [:std]").unwrap();
-        assert_eq!(p, None);
-        assert_eq!(c, Some("std".into()));
+        // Two segments: the second slot is always position, never collection.
+        let (_, p, pos, c) = CardStore::parse_overrides("Gandalf [tples:37]").unwrap();
+        assert_eq!(p, Some("tples".into()));
+        assert_eq!(pos, Some(37));
+        assert_eq!(c, None);
+
+        // A non-numeric second segment is still read as position (so it
+        // parses to None); it is never reinterpreted as a collection.
+        let (_, p, pos, c) = CardStore::parse_overrides("Sure Gamble [alt:ffg-en]").unwrap();
+        assert_eq!(p, Some("alt".into()));
+        assert_eq!(pos, None);
+        assert_eq!(c, None);
+
+        // Three segments: printing, position, collection.
+        let (_, p, pos, c) = CardStore::parse_overrides("Gandalf [tples:37:enhanced]").unwrap();
+        assert_eq!(p, Some("tples".into()));
+        assert_eq!(pos, Some(37));
+        assert_eq!(c, Some("enhanced".into()));
+
+        // Naming a collection without pinning a position needs the empty
+        // middle slot.
+        let (_, p, pos, c) =
+            CardStore::parse_overrides("Sure Gamble [core_set::enhanced]").unwrap();
+        assert_eq!(p, Some("core_set".into()));
+        assert_eq!(pos, None);
+        assert_eq!(c, Some("enhanced".into()));
 
         // Case normalization in overrides
-        let (_, p, _) = CardStore::parse_overrides("Card [ALT]").unwrap();
+        let (_, p, _, _) = CardStore::parse_overrides("Card [ALT]").unwrap();
         assert_eq!(p, Some("alt".into()));
+    }
+
+    #[test]
+    fn test_parse_overrides_rejects_too_many_segments() {
+        assert!(CardStore::parse_overrides("Card [a:b:c:d]").is_err());
+    }
+
+    #[tokio::test]
+    async fn cardlist_position_override_resolves_through_the_full_pipeline() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        db.initialize_schema().await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('pack_tples', 'tples', 'Two-Player Limited Edition Starter', 'lotrlcg')").await.unwrap();
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_gandalf_core', 'gandalf_core', 'lotrlcg', 'Gandalf', 'gandalf')").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_gandalf_4', 'lotrlcg_gandalf_core', 'pack_tples', 1, 4)").await.unwrap();
+
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        // The trailing "# comment" must not swallow the position segment --
+        // position uses ":" now, so it no longer collides with "#" comments.
+        let result = store
+            .parse_cardlist_into_card_requests("1x Gandalf [tples:37:enhanced] # my copy")
+            .await
+            .unwrap();
+
+        assert_eq!(result.requests.len(), 1);
+        assert_eq!(result.requests[0].printing, Some("tples".to_string()));
+        assert_eq!(result.requests[0].position, Some(37));
+    }
+
+    /// One card printed in two packs, with an image only in the older one --
+    /// the shape of the whole revised line.
+    async fn two_packs_one_image() -> (tempfile::TempDir, DbStorage) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        db.initialize_schema().await.unwrap();
+        for q in [
+            "INSERT INTO packs (id, api_id, name, game_id, date_release) VALUES ('p_core', 'core_set', 'Core Set', 'lotrlcg', '2011-04-20')",
+            "INSERT INTO packs (id, api_id, name, game_id, date_release) VALUES ('p_rev', 'revised_core_set', 'Revised Core Set', 'lotrlcg', '2022-01-01')",
+            "INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_aragorn_core', 'aragorn_core', 'lotrlcg', 'Aragorn', 'aragorn')",
+            "INSERT INTO card_versions (id, card_id, pack_id, quantity, position, api_id) VALUES ('v_core', 'lotrlcg_aragorn_core', 'p_core', 1, 1, 'aragorn_core')",
+            "INSERT INTO card_versions (id, card_id, pack_id, quantity, position, api_id) VALUES ('v_rev', 'lotrlcg_aragorn_core', 'p_rev', 1, 1, 'aragorn_revcore')",
+            "INSERT INTO collections (id, name, game_id, added_date) VALUES (1, 'enhanced', 'lotrlcg', '2024-01-01')",
+            "INSERT INTO printings (id, collection_id, card_id, version_id, file_path, side) VALUES (1, 1, 'lotrlcg_aragorn_core', 'v_core', 'a.jpg', 'front')",
+        ] {
+            db.execute(q).await.unwrap();
+        }
+        (temp_dir, db)
+    }
+
+    #[tokio::test]
+    async fn a_pack_with_no_images_of_its_own_is_still_printable_from_another_pack() {
+        let (_dir, mut db) = two_packs_one_image().await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        let packs = store.get_available_packs().await.unwrap();
+        let revised = packs.iter().find(|p| p.id == "p_rev").unwrap();
+
+        // Revised Core owns no image, but its Aragorn is the Core Set Aragorn,
+        // so the card prints and the pack must be offered.
+        assert!(revised.collections.is_empty());
+        assert_eq!((revised.total, revised.printable), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_pack_owning_its_image_reports_it_as_its_own() {
+        let (_dir, mut db) = two_packs_one_image().await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        let packs = store.get_available_packs().await.unwrap();
+        let core = packs.iter().find(|p| p.id == "p_core").unwrap();
+
+        assert_eq!(core.collections, vec!["1 in enhanced".to_string()]);
+        assert_eq!((core.total, core.printable), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_pack_whose_cards_have_no_image_anywhere_is_not_printable() {
+        let (_dir, mut db) = two_packs_one_image().await;
+        for q in [
+            "INSERT INTO packs (id, api_id, name, game_id) VALUES ('p_dom', 'the_dark_of_mirkwood', 'The Dark of Mirkwood', 'lotrlcg')",
+            "INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_obsidian_arrows', 'obsidian_arrows', 'lotrlcg', 'Obsidian Arrows', 'obsidian_arrows')",
+            "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_dom', 'lotrlcg_obsidian_arrows', 'p_dom', 1, 26)",
+        ] {
+            db.execute(q).await.unwrap();
+        }
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        let packs = store.get_available_packs().await.unwrap();
+        let dom = packs.iter().find(|p| p.id == "p_dom").unwrap();
+
+        assert_eq!((dom.total, dom.printable), (1, 0));
     }
 
     #[test]
@@ -1067,16 +1558,13 @@ mod tests {
             is_official: true,
             variant: None,
             file_path: "l5r/collection/fine-katana@core.jpg".into(),
-            part: "front".into(),
+            side: "front".into(),
             name: "collection".into(),
-            side: "test".into(),
+            back_group: "test".into(),
             pack_id: Some("core".into()),
             date_release: Some("2017-10-05".into()),
             has_bleed: false,
-            back_type: None,
-            linked_card_code: None,
-            linked_card_name: None,
-            linked_card_back_type: None,
+            position: None,
         };
         let row2 = AvailablePrintingRow {
             title: "Fine Katana".into(),
@@ -1084,16 +1572,13 @@ mod tests {
             is_official: true,
             variant: None,
             file_path: "l5r/collection/fine-katana@emerald-core-set.jpg".into(),
-            part: "front".into(),
+            side: "front".into(),
             name: "collection".into(),
-            side: "test".into(),
+            back_group: "test".into(),
             pack_id: Some("emerald-core-set".into()),
             date_release: Some("2021-10-21".into()),
             has_bleed: false,
-            back_type: None,
-            linked_card_code: None,
-            linked_card_name: None,
-            linked_card_back_type: None,
+            position: None,
         };
 
         let result = CardStore::assemble_printings(vec![row1, row2]);
@@ -1106,6 +1591,47 @@ mod tests {
             .collect();
         assert!(pack_ids.contains(&"core"));
         assert!(pack_ids.contains(&"emerald-core-set"));
+    }
+
+    #[test]
+    fn test_assemble_printings_distinguishes_positions_in_one_pack() {
+        // The Two-Player Limited Edition Starter prints Gandalf twice: same
+        // title, id, pack, and collection, different scans at positions 4 and 37.
+        let row_4 = AvailablePrintingRow {
+            title: "Gandalf".into(),
+            id: "gandalf_core".into(),
+            is_official: true,
+            variant: None,
+            file_path: "lotrlcg/enhanced/gandalf_1_tples@tples.jpg".into(),
+            side: "front".into(),
+            name: "enhanced".into(),
+            back_group: "player".into(),
+            pack_id: Some("two_player_limited_edition_starter".into()),
+            date_release: Some("2013-01-01".into()),
+            has_bleed: false,
+            position: Some(4),
+        };
+        let row_37 = AvailablePrintingRow {
+            title: "Gandalf".into(),
+            id: "gandalf_core".into(),
+            is_official: true,
+            variant: None,
+            file_path: "lotrlcg/enhanced/gandalf_2_tples@tples.jpg".into(),
+            side: "front".into(),
+            name: "enhanced".into(),
+            back_group: "player".into(),
+            pack_id: Some("two_player_limited_edition_starter".into()),
+            date_release: Some("2013-01-01".into()),
+            has_bleed: false,
+            position: Some(37),
+        };
+
+        let result = CardStore::assemble_printings(vec![row_4, row_37]);
+        let printings = result.get("gandalf").unwrap();
+
+        assert_eq!(printings.len(), 2);
+        let positions: Vec<_> = printings.iter().map(|p| p.position).collect();
+        assert_eq!(positions, vec![Some(4), Some(37)]);
     }
 
     fn get_mock_available_printings() -> HashMap<String, Vec<Printing>> {
@@ -1170,18 +1696,21 @@ mod tests {
             id: "sure_gamble".into(),
             printing: None,
             collection: None,
+            position: None,
         };
         let req2 = CardRequest {
             title: "Missing Card".into(),
             id: "missing_card".into(),
             printing: None,
             collection: None,
+            position: None,
         };
         let req3 = CardRequest {
             title: "Snare!".into(),
             id: "snare_".into(),
             printing: None,
             collection: None,
+            position: None,
         };
 
         let result = store
@@ -1218,11 +1747,13 @@ mod tests {
                     card_id: "sure_gamble".to_string(),
                     pack_id: Some("core".to_string()),
                     quantity: 3,
+                    position: None,
                 },
                 crate::models::DecklistEntry {
                     card_id: "snare_".to_string(),
                     pack_id: None,
                     quantity: 1,
+                    position: None,
                 },
             ],
         };
@@ -1243,5 +1774,123 @@ mod tests {
         assert_eq!(snare_reqs.len(), 1);
         assert_eq!(snare_reqs[0].printing, None);
         assert_eq!(snare_reqs[0].title, "Snare!");
+    }
+
+    async fn seed_lotrlcg_db(db: &mut DbStorage) {
+        db.initialize_schema().await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('pack_voi', 'voi', 'The Voice of Isengard', 'lotrlcg')").await.unwrap();
+
+        // Two cards sharing the plain title "Gríma" -- titles aren't
+        // disambiguated yet, that lands in a later commit.
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_grima_hero_voi', 'grima_hero_voi', 'lotrlcg', 'Gríma', 'grima')").await.unwrap();
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_grima_objective_ally_voi', 'grima_objective_ally_voi', 'lotrlcg', 'Gríma', 'grima')").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_grima_hero', 'lotrlcg_grima_hero_voi', 'pack_voi', 3, 2)").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_grima_ally', 'lotrlcg_grima_objective_ally_voi', 'pack_voi', 3, 16)").await.unwrap();
+
+        // Thorin Stonehelm (actual position 36) and Aragorn (position 1) in
+        // the same pack -- RingsDB code 22001 names Thorin but claims #1.
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_thorin_stonehelm', 'thorin_stonehelm', 'lotrlcg', 'Thorin Stonehelm', 'thorin_stonehelm')").await.unwrap();
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_aragorn_tples', 'aragorn_tples', 'lotrlcg', 'Aragorn', 'aragorn')").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_thorin', 'lotrlcg_thorin_stonehelm', 'pack_voi', 3, 36)").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_aragorn', 'lotrlcg_aragorn_tples', 'pack_voi', 1, 1)").await.unwrap();
+
+        // Gildor Inglorion, already stored under its disambiguated title, and
+        // Eyes in the Dark at the position RingsDB code 22081 lies about
+        // (#81, an encounter treachery).
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_gildor_inglorion_tples', 'gildor_inglorion_tples', 'lotrlcg', 'Gildor Inglorion (TPLES)', 'gildor_inglorion__tples_')").await.unwrap();
+        db.execute("INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('lotrlcg_eyes_in_the_dark', 'eyes_in_the_dark', 'lotrlcg', 'Eyes in the Dark', 'eyes_in_the_dark')").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_gildor', 'lotrlcg_gildor_inglorion_tples', 'pack_voi', 1, 5)").await.unwrap();
+        db.execute("INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_eyes', 'lotrlcg_eyes_in_the_dark', 'pack_voi', 1, 81)").await.unwrap();
+    }
+
+    fn grima_entry(position: Option<i64>) -> Decklist {
+        Decklist {
+            cards: vec![crate::models::DecklistEntry {
+                card_id: "grima".to_string(),
+                pack_id: Some("voi".to_string()),
+                quantity: 1,
+                position,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn two_cards_sharing_a_title_resolve_by_position() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_lotrlcg_db(&mut db).await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        let hero = store
+            .resolve_decklist_to_requests(&grima_entry(Some(2)))
+            .await
+            .unwrap();
+        assert_eq!(hero.requests[0].id, "grima_hero_voi");
+
+        let ally = store
+            .resolve_decklist_to_requests(&grima_entry(Some(16)))
+            .await
+            .unwrap();
+        assert_eq!(ally.requests[0].id, "grima_objective_ally_voi");
+    }
+
+    #[tokio::test]
+    async fn a_shared_title_with_no_position_still_resolves_deterministically() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_lotrlcg_db(&mut db).await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        let result = store
+            .resolve_decklist_to_requests(&grima_entry(None))
+            .await
+            .unwrap();
+        assert_eq!(result.requests[0].id, "grima_hero_voi");
+    }
+
+    #[tokio::test]
+    async fn a_lying_position_does_not_override_a_unique_name_match_in_the_pack() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_lotrlcg_db(&mut db).await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        // RingsDB code 22001: names Thorin Stonehelm, but claims position 1,
+        // which in this pack actually belongs to Aragorn.
+        let decklist = Decklist {
+            cards: vec![crate::models::DecklistEntry {
+                card_id: "thorin_stonehelm".to_string(),
+                pack_id: Some("voi".to_string()),
+                quantity: 1,
+                position: Some(1),
+            }],
+        };
+
+        let result = store.resolve_decklist_to_requests(&decklist).await.unwrap();
+        assert_eq!(result.requests[0].id, "thorin_stonehelm");
+    }
+
+    #[tokio::test]
+    async fn a_lying_position_does_not_override_a_disambiguated_title_match() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_lotrlcg_db(&mut db).await;
+        let mut store = CardStore::new(&mut db, "lotrlcg".to_string()).unwrap();
+
+        // RingsDB code 22081: names Gildor Inglorion, but claims position 81,
+        // which in this pack belongs to Eyes in the Dark, an encounter card.
+        // The stored title is disambiguated ("Gildor Inglorion (TPLES)"), so
+        // the deck's plain name only matches its disambiguating suffix.
+        let decklist = Decklist {
+            cards: vec![crate::models::DecklistEntry {
+                card_id: "gildor_inglorion".to_string(),
+                pack_id: Some("voi".to_string()),
+                quantity: 1,
+                position: Some(81),
+            }],
+        };
+
+        let result = store.resolve_decklist_to_requests(&decklist).await.unwrap();
+        assert_eq!(result.requests[0].id, "gildor_inglorion_tples");
     }
 }

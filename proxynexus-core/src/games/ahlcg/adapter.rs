@@ -9,7 +9,6 @@ use crate::games::ahlcg::api::fetch_decklist_from_arkhamdb;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::ahlcg::api::{fetch_all_cards, fetch_packs};
 use crate::models::Decklist;
-use crate::mpc::CardBackProvider;
 use async_trait::async_trait;
 
 pub struct AhlcgAdapter {}
@@ -66,7 +65,7 @@ const ENCOUNTER_TYPES: &[&str] = &[
 ];
 
 #[cfg(not(target_arch = "wasm32"))]
-fn back_type_for(type_code: &str, subtype_code: Option<&str>) -> Option<String> {
+fn back_group_for(type_code: &str, subtype_code: Option<&str>) -> Option<String> {
     // Weakness cards are drawn from -- and shuffled back into -- the
     // investigator's own deck, so they carry the PLAYER card back
     // regardless of type_code, even for "enemy"/"treachery" weaknesses
@@ -110,33 +109,22 @@ impl CatalogProvider for AhlcgAdapter {
         let mut card_versions = Vec::with_capacity(ahdb_cards.len());
 
         for card in ahdb_cards {
-            // Unlike MarvelCDB, ArkhamDB keeps both sides of a double-sided
-            // card (e.g. an investigator's front/back) under one `code`, so
-            // each ArkhamDB card maps 1:1 to a Card/CardVersion here. The
-            // back image is picked up separately at collection-build time
-            // via the `{card_id}@{pack_id}~back` filename convention.
+            // ArkhamDB keeps both sides of a double-sided card (e.g. an
+            // investigator's front/back) under one `code`, so each
+            // ArkhamDB card maps 1:1 to a Card/CardVersion here. The back
+            // image is picked up separately at collection-build time via
+            // the `{card_id}@{pack_id}~back` filename convention.
             //
-            // linked_card (when present) is a DIFFERENT thing from that --
-            // a mechanically distinct card ArkhamDB never lists on its own
-            // (e.g. Carl Sanford, an asset/player card up front, links to
-            // 71034b, an enemy/encounter card on the back). Deliberately
-            // does NOT change this card's own back_type (still purely
-            // type_code-based, same as every other card) -- it only adds
-            // supplementary linked_card_* info so generation output can
-            // show what the physical back actually is.
-            let linked_card_back_type = card
-                .linked_card
-                .as_ref()
-                .and_then(|lc| back_type_for(&lc.type_code, None));
+            // TODO: `card.linked_card` (a mechanically distinct card
+            // ArkhamDB never lists on its own, e.g. Carl Sanford flipping
+            // into an enemy on the back) isn't represented yet under the
+            // new back_group/CardSide model -- dropped here pending that
+            // follow-up conversion.
             cards.push(Card {
                 id: card.code.clone(),
                 title: card.name.clone(),
                 title_normalized: normalize_title(&card.name),
-                side: Some(card.faction_code.clone()),
-                back_type: back_type_for(&card.type_code, card.subtype_code.as_deref()),
-                linked_card_code: card.linked_card.as_ref().map(|lc| lc.code.clone()),
-                linked_card_name: card.linked_card.as_ref().map(|lc| lc.name.clone()),
-                linked_card_back_type,
+                back_group: back_group_for(&card.type_code, card.subtype_code.as_deref()),
             });
 
             card_versions.push(CardVersion {
@@ -144,6 +132,7 @@ impl CatalogProvider for AhlcgAdapter {
                 pack_id: card.pack_code,
                 quantity: card.quantity.unwrap_or(1),
                 position: Some(card.position),
+                api_id: None,
             });
         }
 
@@ -162,53 +151,5 @@ impl CatalogProvider for AhlcgAdapter {
 impl DecklistProvider for AhlcgAdapter {
     async fn fetch(&self, url: &str) -> Result<Decklist> {
         fetch_decklist_from_arkhamdb(url).await
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl CardBackProvider for AhlcgAdapter {
-    async fn fetch_card_backs(&self) -> Result<Vec<(String, Vec<u8>)>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Ok(vec![
-                (
-                    "ahlcg_player_back.png".to_string(),
-                    include_bytes!("../../../assets/ahlcg_player_back.png").to_vec(),
-                ),
-                (
-                    "ahlcg_encounter_back.png".to_string(),
-                    include_bytes!("../../../assets/ahlcg_encounter_back.png").to_vec(),
-                ),
-            ])
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            use futures::future::join_all;
-            use gloo_net::http::Request;
-
-            let filenames = ["ahlcg_player_back.png", "ahlcg_encounter_back.png"];
-
-            let fetch_futures = filenames.iter().map(|filename| async move {
-                let url = format!("card_backs/{}", filename);
-                let response = Request::get(&url).send().await?;
-
-                if !response.ok() {
-                    return Err(crate::error::ProxyNexusError::Internal(format!(
-                        "Failed to fetch {}: HTTP {}",
-                        url,
-                        response.status()
-                    )));
-                }
-
-                let bytes = response.binary().await?;
-
-                Ok((filename.to_string(), bytes))
-            });
-
-            let results: Vec<Result<(String, Vec<u8>)>> = join_all(fetch_futures).await;
-            results.into_iter().collect()
-        }
     }
 }

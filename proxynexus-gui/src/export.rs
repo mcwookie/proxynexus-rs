@@ -6,7 +6,6 @@ use async_lock::Mutex;
 use dioxus::prelude::*;
 use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
 use proxynexus_core::db_storage::DbStorage;
-use proxynexus_core::games::get_card_back_adapter;
 use proxynexus_core::mpc::{MpcOptions, generate_mpc_zip};
 use proxynexus_core::pdf::{PdfOptions, generate_pdf};
 use proxynexus_core::query::apply_variant_overrides;
@@ -138,13 +137,6 @@ pub async fn run_export(
     }
     .await;
 
-    let manifest_files = resolved_printings.as_ref().ok().map(|printings| {
-        let entries = proxynexus_core::manifest::build_manifest(printings);
-        let csv = proxynexus_core::manifest::manifest_to_csv(&entries);
-        let json = proxynexus_core::manifest::manifest_to_json(&entries).unwrap_or_default();
-        (csv, json)
-    });
-
     let selected_printings = if let Ok(ref printings) = resolved_printings {
         printings
             .iter()
@@ -177,27 +169,23 @@ pub async fn run_export(
     #[cfg(target_arch = "wasm32")]
     let image_provider_result = Ok(proxynexus_core::image_provider::RemoteImageProvider);
 
-    let mut mpc_autofill_slots: Option<Vec<proxynexus_core::mpc::AutofillSlot>> = None;
-
     let result = match (resolved_printings, image_provider_result) {
         (Ok(printings), Ok(image_provider)) => match options {
-            ExportOptions::Pdf(pdf_opts) => {
-                generate_pdf(printings, &image_provider, pdf_opts, progress_callback)
-                    .await
-                    .context("PDF generation failed")
-            }
+            ExportOptions::Pdf(pdf_opts) => generate_pdf(
+                printings,
+                &image_provider,
+                &active_game_id,
+                pdf_opts,
+                progress_callback,
+            )
+            .await
+            .context("PDF generation failed"),
             ExportOptions::Mpc(mpc_opts) => {
-                let card_backs =
-                    if let Some(card_back_adapter) = get_card_back_adapter(&active_game_id) {
-                        card_back_adapter
-                            .fetch_card_backs()
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
-                    };
+                let card_backs = proxynexus_core::card_backs::fetch_card_backs(&active_game_id)
+                    .await
+                    .unwrap_or_default();
 
-                match generate_mpc_zip(
+                generate_mpc_zip(
                     printings,
                     &image_provider,
                     mpc_opts,
@@ -205,13 +193,7 @@ pub async fn run_export(
                     progress_callback,
                 )
                 .await
-                {
-                    Ok(mpc_output) => {
-                        mpc_autofill_slots = Some(mpc_output.autofill_slots);
-                        Ok(mpc_output.zip_bytes)
-                    }
-                    Err(e) => Err(e).context("MPC ZIP generation failed"),
-                }
+                .context("MPC ZIP generation failed")
             }
         },
         (Err(e), _) => Err(e),
@@ -256,69 +238,10 @@ pub async fn run_export(
         error_message,
     });
 
-    if let Ok(bytes) = result {
-        if let Some(slots) = mpc_autofill_slots {
-            // MPC exports bundle the manifest CSV/JSON and the mpc-autofill
-            // order XML into the same zip as the card images, so there's
-            // one download instead of four. No stock/foil picker in the
-            // GUI yet -- (S33) Superior Smooth, non-foil, matching the
-            // CLI's own default.
-            let xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
-                &slots,
-                proxynexus_core::mpc::MpcAutofillOptions {
-                    stock: proxynexus_core::mpc::Cardstock::S33,
-                    foil: false,
-                },
-            );
-
-            let mut extra_files: Vec<(&str, &[u8])> =
-                vec![("proxynexus_export_mpc_autofill.xml", xml.as_bytes())];
-            if let Some((csv, json)) = &manifest_files {
-                extra_files.push(("proxynexus_export_manifest.csv", csv.as_bytes()));
-                extra_files.push(("proxynexus_export_manifest.json", json.as_bytes()));
-            }
-
-            match proxynexus_core::mpc::append_files_to_zip(bytes, &extra_files) {
-                Ok(combined) => {
-                    if let Err(e) =
-                        save_file(&combined, meta.filename, meta.filter, meta.ext, meta.mime).await
-                    {
-                        error!("Failed to save {}: {:?}", meta.format, e);
-                    }
-                }
-                Err(e) => error!("Failed to bundle manifest/xml into MPC zip: {:?}", e),
-            }
-        } else {
-            if let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await
-            {
-                error!("Failed to save {}: {:?}", meta.format, e);
-            }
-
-            if let Some((csv, json)) = manifest_files {
-                if let Err(e) = save_file(
-                    csv.as_bytes(),
-                    "proxynexus_export_manifest.csv",
-                    "CSV",
-                    "csv",
-                    "text/csv",
-                )
-                .await
-                {
-                    error!("Failed to save card back manifest CSV: {:?}", e);
-                }
-                if let Err(e) = save_file(
-                    json.as_bytes(),
-                    "proxynexus_export_manifest.json",
-                    "JSON",
-                    "json",
-                    "application/json",
-                )
-                .await
-                {
-                    error!("Failed to save card back manifest JSON: {:?}", e);
-                }
-            }
-        }
+    if let Ok(bytes) = result
+        && let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await
+    {
+        error!("Failed to save {}: {:?}", meta.format, e);
     }
 
     progress_signal.set(None);

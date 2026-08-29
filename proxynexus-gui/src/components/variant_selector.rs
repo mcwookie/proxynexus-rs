@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
-use proxynexus_core::models::Printing;
+use proxynexus_core::models::{BleedPreference, Printing};
+use std::collections::HashSet;
 
 use super::build_image_url;
 
@@ -22,13 +23,20 @@ pub struct VariantSelectorProps {
 pub fn VariantSelector(props: VariantSelectorProps) -> Element {
     let mut selected_variant_str = use_signal(|| None::<String>);
     let variants = props.variants.clone();
-    let current_p_display = props
-        .printing
-        .pack_id
-        .as_deref()
-        .or(props.printing.variant.as_deref())
-        .unwrap_or("");
-    let current_variant_str = format!("{}:{}", current_p_display, props.printing.collection);
+    let current_variant_str = props.printing.variant_key();
+
+    // When two options share a pack and collection, append the position tells them apart.
+    let duplicated_pack_and_collection: HashSet<(Option<String>, String)> = {
+        let mut seen = HashSet::new();
+        let mut duplicated = HashSet::new();
+        for v in &variants {
+            let pack_and_collection = (v.pack_id.clone(), v.collection.clone());
+            if !seen.insert(pack_and_collection.clone()) {
+                duplicated.insert(pack_and_collection);
+            }
+        }
+        duplicated
+    };
 
     rsx! {
         div {
@@ -59,14 +67,20 @@ pub fn VariantSelector(props: VariantSelectorProps) -> Element {
                 class: "flex flex-wrap gap-2 max-w-[280px] md:max-w-[650px]",
                 for v in variants.into_iter() {
                     {
-                        let p_display = v.pack_id.as_deref().or(v.variant.as_deref()).unwrap_or("");
-                        let v_str = format!("{}:{}", p_display, v.collection);
+                        let v_str = v.variant_key();
                         let is_selected = current_variant_str == v_str;
-                        let variant_label = v.variant.clone().unwrap_or_else(|| "Official".to_string());
+                        let mut variant_label =
+                            v.variant.clone().unwrap_or_else(|| "Official".to_string());
+                        if let Some(pos) = v.position
+                            && duplicated_pack_and_collection
+                                .contains(&(v.pack_id.clone(), v.collection.clone()))
+                        {
+                            variant_label = format!("{} #{}", variant_label, pos);
+                        }
 
                         rsx! {
                             button {
-                                class: format!("relative w-[80px] md:w-[150px] shrink-0 rounded overflow-hidden aspect-[2.5/3.5] border-2 transition-all {}",
+                                class: format!("relative w-[80px] md:w-[150px] shrink-0 rounded overflow-hidden border-2 transition-all {}",
                                     if is_selected {
                                         "border-blue-500 shadow-md ring-2 ring-blue-500 ring-offset-1"
                                     } else {
@@ -82,18 +96,23 @@ pub fn VariantSelector(props: VariantSelectorProps) -> Element {
                                     }
                                 },
                                 {
-                                    let (image_key, is_bleed) = v.pdf_image();
-                                    let style = if is_bleed {
+                                    let source = v.front.image(BleedPreference::NoBleed);
+                                    let style = if source.as_ref().is_some_and(|s| s.has_bleed) {
                                         "width: 109.6774%; height: 106.9364%; max-width: none; flex-shrink: 0; image-rendering: auto; -webkit-backface-visibility: hidden;"
                                     } else {
                                         "width: 100%; height: 100%; object-fit: cover; image-rendering: auto; -webkit-backface-visibility: hidden; transform: translateZ(0);"
                                     };
                                     rsx! {
-                                        img {
-                                            src: "{build_image_url(&image_key)}",
-                                            crossorigin: "anonymous",
-                                            style: "{style}",
-                                            alt: "{variant_label}",
+                                        div {
+                                            class: "w-full aspect-[2.5/3.5] overflow-hidden flex items-center justify-center",
+                                            if let Some(source) = source {
+                                                img {
+                                                    src: "{build_image_url(&source.key)}",
+                                                    crossorigin: "anonymous",
+                                                    style: "{style}",
+                                                    alt: "{variant_label}",
+                                                }
+                                            }
                                         }
                                     }
                                 }

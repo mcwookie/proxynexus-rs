@@ -7,6 +7,7 @@ use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
+use crate::games::netrunner_reboot::adapter::NetrunnerRebootAdapter;
 use crate::games::whinvasion::adapter::WhiAdapter;
 use async_trait::async_trait;
 use gluesql::FromGlueRow;
@@ -28,33 +29,7 @@ pub struct Card {
     pub id: String,
     pub title: String,
     pub title_normalized: String,
-    pub side: Option<String>,
-    /// Which generic card back this card needs when proxied: `"player"` or
-    /// `"encounter"` for most adapters; `marvel_champions` also has a third,
-    /// `"villain"`, for the physical Villain card's own back art. Not the
-    /// same axis as `side` (deckbuilding
-    /// faction/side) -- e.g. an Arkham Horror LCG asset card found via an
-    /// encounter set but usable in a player deck needs the player back
-    /// despite having faction_code "mythos". `None` for adapters that
-    /// haven't classified this yet (only `marvel_champions`/`ahlcg` do so
-    /// far -- see each adapter's `back_type_for` for the exact per-game
-    /// classification and the data confirming why a naive `side`-based
-    /// guess would be wrong for some cards).
-    pub back_type: Option<String>,
-    /// Set when this card's back is a MECHANICALLY DIFFERENT card (e.g.
-    /// Arkham Horror LCG's Carl Sanford, an asset/player card up front that
-    /// flips into an enemy/encounter card on the back) rather than either a
-    /// generic back or the flip side of the same identity. Purely
-    /// informational -- deliberately does not affect `back_type`, which
-    /// always reflects this card's own front classification. `None` for
-    /// every card without this kind of linked back (the vast majority).
-    /// Currently only populated by the `ahlcg` adapter.
-    pub linked_card_code: Option<String>,
-    pub linked_card_name: Option<String>,
-    /// The linked card's own back_type classification (player/encounter),
-    /// computed the same way as this card's `back_type` but from the
-    /// linked card's `type_code` instead.
-    pub linked_card_back_type: Option<String>,
+    pub back_group: Option<String>,
 }
 
 pub struct CardVersion {
@@ -62,6 +37,7 @@ pub struct CardVersion {
     pub pack_id: String,
     pub quantity: i64,
     pub position: Option<i64>,
+    pub api_id: Option<String>,
 }
 
 pub struct Catalog {
@@ -86,6 +62,7 @@ impl<'a> CatalogManager<'a> {
     pub fn new(db: &'a mut DbStorage) -> Self {
         let adapters: Vec<Box<dyn CatalogProvider>> = vec![
             Box::new(NetrunnerAdapter::new()),
+            Box::new(NetrunnerRebootAdapter::new()),
             Box::new(L5rAdapter::new()),
             Box::new(AgotAdapter::new()),
             Box::new(LotrLcgAdapter::new()),
@@ -179,39 +156,19 @@ impl<'a> CatalogManager<'a> {
         }
 
         for card in &catalog.cards {
-            let side = card
-                .side
-                .as_ref()
-                .map_or("NULL".to_string(), |s| quote_sql_string(s));
-            let back_type = card
-                .back_type
-                .as_ref()
-                .map_or("NULL".to_string(), |s| quote_sql_string(s));
-            let linked_card_code = card
-                .linked_card_code
-                .as_ref()
-                .map_or("NULL".to_string(), |s| quote_sql_string(s));
-            let linked_card_name = card
-                .linked_card_name
-                .as_ref()
-                .map_or("NULL".to_string(), |s| quote_sql_string(s));
-            let linked_card_back_type = card
-                .linked_card_back_type
+            let back_group = card
+                .back_group
                 .as_ref()
                 .map_or("NULL".to_string(), |s| quote_sql_string(s));
             let db_card_id = format!("{}_{}", catalog.game_id, card.id);
             let q = format!(
-                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type, linked_card_code, linked_card_name, linked_card_back_type) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group) VALUES ({}, {}, {}, {}, {}, {})",
                 quote_sql_string(&db_card_id),
                 quote_sql_string(&card.id),
                 quote_sql_string(&catalog.game_id),
                 quote_sql_string(&card.title),
                 quote_sql_string(&card.title_normalized),
-                side,
-                back_type,
-                linked_card_code,
-                linked_card_name,
-                linked_card_back_type
+                back_group
             );
             self.db.execute(&q).await?;
         }
@@ -219,17 +176,25 @@ impl<'a> CatalogManager<'a> {
         for card_version in &catalog.card_versions {
             let db_card_id = format!("{}_{}", catalog.game_id, card_version.card_id);
             let db_pack_id = format!("{}_{}", catalog.game_id, card_version.pack_id);
-            let db_id = format!("{}_{}", db_card_id, db_pack_id);
+            let db_id = match &card_version.api_id {
+                Some(api_id) => format!("{}_{}", catalog.game_id, api_id),
+                None => format!("{}_{}", db_card_id, db_pack_id),
+            };
             let position_val = card_version
                 .position
                 .map_or("NULL".to_string(), |p| p.to_string());
+            let api_id_val = card_version
+                .api_id
+                .as_ref()
+                .map_or("NULL".to_string(), |a| quote_sql_string(a));
             let q = format!(
-                "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ({}, {}, {}, {}, {})",
+                "INSERT INTO card_versions (id, card_id, pack_id, quantity, position, api_id) VALUES ({}, {}, {}, {}, {}, {})",
                 quote_sql_string(&db_id),
                 quote_sql_string(&db_card_id),
                 quote_sql_string(&db_pack_id),
                 card_version.quantity,
-                position_val
+                position_val,
+                api_id_val
             );
             self.db.execute(&q).await?;
         }

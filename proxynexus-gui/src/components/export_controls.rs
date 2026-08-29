@@ -1,5 +1,6 @@
 use crate::export::ExportOptions;
 use dioxus::prelude::*;
+use proxynexus_core::card_backs;
 use proxynexus_core::mpc::MpcOptions;
 use proxynexus_core::pdf::{
     CutLines, DEFAULT_CUT_LINE_THICKNESS, MAX_CUT_LINE_THICKNESS, MIN_CUT_LINE_THICKNESS, PageSize,
@@ -23,6 +24,13 @@ pub enum PageSizePreset {
 pub enum CustomUnit {
     In,
     Cm,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum Sides {
+    #[default]
+    Single,
+    Double,
 }
 
 #[derive(Props, Clone, PartialEq, Debug)]
@@ -74,6 +82,8 @@ pub struct ExportControlsProps {
     pub on_generate: EventHandler<ExportOptions>,
     pub on_open_info: EventHandler<(f64, f64, f64)>,
     pub on_open_upscale_info: EventHandler<(f64, f64, f64)>,
+    pub on_open_sides_info: EventHandler<(f64, f64, f64)>,
+    pub active_game_id: Signal<Option<String>>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -90,6 +100,24 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
     let mut cut_lines = use_signal(CutLines::default);
     let mut cut_line_thickness = use_signal(|| DEFAULT_CUT_LINE_THICKNESS.to_string());
     let mut print_layout = use_signal(PrintLayout::default);
+    let mut sides = use_signal(Sides::default);
+    // Narrow screens stack the preview above these, so they start folded. The
+    // wrapper below is `md:flex` either way, so this never reaches desktop.
+    let mut options_open = use_signal(|| false);
+    let mut back_label = use_signal(|| None::<&'static str>);
+
+    let active_game_id = props.active_game_id;
+    let back_labels =
+        use_memo(move || active_game_id().map_or_else(Vec::new, |id| card_backs::back_labels(&id)));
+
+    let default_back_label =
+        use_memo(move || active_game_id().and_then(|id| card_backs::default_label(&id)));
+
+    use_effect(move || {
+        if back_label().is_some_and(|label| !back_labels().contains(&label)) {
+            back_label.set(None);
+        }
+    });
     let mut upscale = use_signal(|| false);
     let mut show_donate = use_signal(|| false);
 
@@ -153,204 +181,318 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
 
     let validation = page_size_validation();
 
+    let instructions_href = if cfg!(target_arch = "wasm32") {
+        "/instructions.html"
+    } else {
+        "https://proxynexus.net/instructions.html"
+    };
+
     rsx! {
         div {
-            class: "md:h-[480px] flex-shrink-0 p-2 md:p-4 border-t border-gray-200 bg-gray-50 flex flex-col gap-2 md:gap-4 overflow-y-auto",
+            class: "md:h-[580px] flex-shrink-0 p-2 md:p-4 border-t border-gray-200 bg-gray-50 flex flex-col md:gap-4 overflow-y-auto",
 
-            div { class: "flex flex-col gap-1 md:gap-2",
-                label { class: "text-xs md:text-sm font-medium text-gray-700", "Format" }
-                SegmentedControl {
-                    value: export_format(),
-                    disabled: is_generating,
-                    options: vec![
-                        (ExportFormat::Pdf, "PDF"),
-                        (ExportFormat::Mpc, "MPC"),
-                    ],
-                    on_change: move |v| export_format.set(v)
+            button {
+                class: "md:hidden flex items-center justify-center text-gray-400 hover:text-gray-600 focus:outline-none",
+                aria_label: if options_open() { "Hide options" } else { "Show options" },
+                onclick: move |_| options_open.set(!options_open()),
+                svg {
+                    xmlns: "http://www.w3.org/2000/svg",
+                    width: "18",
+                    height: "18",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    stroke_width: "2",
+                    stroke_linecap: "round",
+                    stroke_linejoin: "round",
+                    class: if options_open() { "transition-transform" } else { "transition-transform rotate-180" },
+                    path { d: "m6 9 6 6 6-6" }
                 }
             }
 
-            if export_format() == ExportFormat::Pdf {
+            div {
+                class: if options_open() {
+                    "flex flex-col gap-2 md:gap-4"
+                } else {
+                    "hidden md:flex md:flex-col md:gap-4"
+                },
                 div { class: "flex flex-col gap-1 md:gap-2",
-                    label { class: "text-xs md:text-sm font-medium text-gray-700", "Page Size" }
+                    label { class: "text-xs md:text-sm font-medium text-gray-700", "Format" }
                     SegmentedControl {
-                        value: page_size_preset(),
+                        value: export_format(),
                         disabled: is_generating,
                         options: vec![
-                            (PageSizePreset::Letter, "Letter"),
-                            (PageSizePreset::A4, "A4"),
-                            (PageSizePreset::Custom, "Custom"),
+                            (ExportFormat::Pdf, "PDF"),
+                            (ExportFormat::Mpc, "MPC"),
                         ],
-                        on_change: move |v| page_size_preset.set(v)
+                        on_change: move |v| export_format.set(v)
                     }
                 }
 
-                if page_size_preset() == PageSizePreset::Custom {
-                    div { class: "flex gap-2 items-start pt-2",
-                        {
-                            let base = "w-full p-2 border rounded-md outline-none focus:ring-2 text-xs md:text-sm transition-all";
-                            let w_state = if validation.width_invalid {
-                                "border-red-500 focus:ring-red-400 bg-red-50"
-                            } else {
-                                "border-gray-300 focus:ring-blue-400 bg-white"
-                            };
-                            let h_state = if validation.height_invalid {
-                                "border-red-500 focus:ring-red-400 bg-red-50"
-                            } else {
-                                "border-gray-300 focus:ring-blue-400 bg-white"
-                            };
+                if export_format() == ExportFormat::Pdf {
+                    div { class: "flex flex-col gap-1 md:gap-2",
+                        label { class: "text-xs md:text-sm font-medium text-gray-700", "Page Size" }
+                        SegmentedControl {
+                            value: page_size_preset(),
+                            disabled: is_generating,
+                            options: vec![
+                                (PageSizePreset::Letter, "Letter"),
+                                (PageSizePreset::A4, "A4"),
+                                (PageSizePreset::Custom, "Custom"),
+                            ],
+                            on_change: move |v| page_size_preset.set(v)
+                        }
+                    }
 
-                            rsx! {
-                                div { class: "flex flex-col w-full gap-1",
-                                    input {
-                                        disabled: is_generating,
-                                        class: "{base} {w_state}",
-                                        type: "text",
-                                        placeholder: "Width",
-                                        value: "{custom_width()}",
-                                        oninput: move |evt| custom_width.set(evt.value().clone())
+                    if page_size_preset() == PageSizePreset::Custom {
+                        div { class: "flex gap-2 items-start pt-2",
+                            {
+                                let base = "w-full p-2 border rounded-md outline-none focus:ring-2 text-xs md:text-sm transition-all";
+                                let w_state = if validation.width_invalid {
+                                    "border-red-500 focus:ring-red-400 bg-red-50"
+                                } else {
+                                    "border-gray-300 focus:ring-blue-400 bg-white"
+                                };
+                                let h_state = if validation.height_invalid {
+                                    "border-red-500 focus:ring-red-400 bg-red-50"
+                                } else {
+                                    "border-gray-300 focus:ring-blue-400 bg-white"
+                                };
+
+                                rsx! {
+                                    div { class: "flex flex-col w-full gap-1",
+                                        input {
+                                            disabled: is_generating,
+                                            class: "{base} {w_state}",
+                                            type: "text",
+                                            placeholder: "Width",
+                                            value: "{custom_width()}",
+                                            oninput: move |evt| custom_width.set(evt.value().clone())
+                                        }
+                                        if validation.width_invalid {
+                                            span { class: "text-xs text-red-500 font-medium", "Invalid" }
+                                        }
                                     }
-                                    if validation.width_invalid {
-                                        span { class: "text-xs text-red-500 font-medium", "Invalid" }
+                                    div { class: "flex flex-col w-full gap-1",
+                                        input {
+                                            disabled: is_generating,
+                                            class: "{base} {h_state}",
+                                            type: "text",
+                                            placeholder: "Height",
+                                            value: "{custom_height()}",
+                                            oninput: move |evt| custom_height.set(evt.value().clone())
+                                        }
+                                        if validation.height_invalid {
+                                            span { class: "text-xs text-red-500 font-medium", "Invalid" }
+                                        }
+                                    }
+                                    select {
+                                        disabled: is_generating,
+                                        class: "p-2 border border-gray-300 rounded-md outline-none focus:ring-2 focus:ring-blue-400 bg-white text-xs md:text-sm h-[38px] shrink-0",
+                                        value: match custom_unit() {
+                                            CustomUnit::In => "in",
+                                            CustomUnit::Cm => "cm",
+                                        },
+                                        onchange: move |evt| {
+                                            let val = match evt.value().as_str() {
+                                                "cm" => CustomUnit::Cm,
+                                                _ => CustomUnit::In,
+                                            };
+                                            custom_unit.set(val);
+                                        },
+                                        option { value: "in", "in" }
+                                        option { value: "cm", "cm" }
                                     }
                                 }
-                                div { class: "flex flex-col w-full gap-1",
-                                    input {
-                                        disabled: is_generating,
-                                        class: "{base} {h_state}",
-                                        type: "text",
-                                        placeholder: "Height",
-                                        value: "{custom_height()}",
-                                        oninput: move |evt| custom_height.set(evt.value().clone())
+                            }
+                        }
+                    }
+
+                    div { class: "flex flex-col gap-1 md:gap-2",
+                        label { class: "text-xs md:text-sm font-medium text-gray-700", "Cut Lines" }
+                        SegmentedControl {
+                            value: cut_lines(),
+                            disabled: is_generating,
+                            options: vec![
+                                (CutLines::None, "None"),
+                                (CutLines::Margins, "Margins"),
+                                (CutLines::FullPage, "Full Page"),
+                            ],
+                            on_change: move |v| cut_lines.set(v)
+                        }
+
+                        if cut_lines() == CutLines::FullPage {
+                            {
+                                let is_invalid = thickness_value().is_none();
+                                let base = "w-full p-2 border rounded-md outline-none focus:ring-2 text-xs md:text-sm transition-all";
+                                let state = if is_invalid {
+                                    "border-red-500 focus:ring-red-400 bg-red-50"
+                                } else {
+                                    "border-gray-300 focus:ring-blue-400 bg-white"
+                                };
+                                rsx! {
+                                    div { class: "flex items-center gap-2 pt-1",
+                                        label { class: "text-xs md:text-sm text-gray-600 shrink-0", "Thickness (pt)" }
+                                        input {
+                                            disabled: is_generating,
+                                            class: "{base} {state}",
+                                            type: "text",
+                                            value: "{cut_line_thickness()}",
+                                            oninput: move |evt| cut_line_thickness.set(evt.value().clone())
+                                        }
                                     }
-                                    if validation.height_invalid {
-                                        span { class: "text-xs text-red-500 font-medium", "Invalid" }
+                                    if is_invalid {
+                                        span { class: "text-xs text-red-500 font-medium",
+                                            "Enter a number between {MIN_CUT_LINE_THICKNESS} and {MAX_CUT_LINE_THICKNESS}"
+                                        }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    div { class: "flex flex-col gap-1 md:gap-2",
+                        div { class: "flex items-center gap-2",
+                            label { class: "text-xs md:text-sm font-medium text-gray-700", "Print Layout" }
+                            button {
+                                id: "print-layout-info-btn",
+                                class: "text-gray-400 hover:text-blue-500 transition-colors focus:outline-none",
+                                onclick: move |_| {
+                                    spawn(async move {
+                                        let mut eval = dioxus::document::eval(
+                                            "
+                                            let el = document.getElementById('print-layout-info-btn');
+                                            let rect = el.getBoundingClientRect();
+                                            dioxus.send([rect.x, rect.y, rect.width]);
+                                            ",
+                                        );
+                                        if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
+                                            props.on_open_info.call((x, y, w));
+                                        }
+                                    });
+                                },
+                                svg {
+                                    xmlns: "http://www.w3.org/2000/svg",
+                                    width: "18",
+                                    height: "18",
+                                    view_box: "0 0 24 24",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "2",
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    circle { cx: "12", cy: "12", r: "10" }
+                                    path { d: "M12 16v-4" }
+                                    path { d: "M12 8h.01" }
+                                }
+                            }
+                        }
+                        SegmentedControl {
+                            value: print_layout(),
+                            disabled: is_generating,
+                            options: vec![
+                                (PrintLayout::EdgeToEdge, "Edge"),
+                                (PrintLayout::Gap, "Gap"),
+                                (PrintLayout::Margin, "Margin"),
+                                (PrintLayout::Bleed, "Bleed"),
+                            ],
+                            on_change: move |v| print_layout.set(v)
+                        }
+                    }
+
+                    div { class: "flex flex-col gap-1 md:gap-2",
+                        div { class: "flex items-center gap-2",
+                            label { class: "text-xs md:text-sm font-medium text-gray-700", "Sides" }
+                            button {
+                                id: "sides-info-btn",
+                                class: "text-gray-400 hover:text-blue-500 transition-colors focus:outline-none",
+                                onclick: move |_| {
+                                    spawn(async move {
+                                        let mut eval = dioxus::document::eval(
+                                            "
+                                            let el = document.getElementById('sides-info-btn');
+                                            let rect = el.getBoundingClientRect();
+                                            dioxus.send([rect.x, rect.y, rect.width]);
+                                            ",
+                                        );
+                                        if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
+                                            props.on_open_sides_info.call((x, y, w));
+                                        }
+                                    });
+                                },
+                                svg {
+                                    xmlns: "http://www.w3.org/2000/svg",
+                                    width: "18",
+                                    height: "18",
+                                    view_box: "0 0 24 24",
+                                    fill: "none",
+                                    stroke: "currentColor",
+                                    stroke_width: "2",
+                                    stroke_linecap: "round",
+                                    stroke_linejoin: "round",
+                                    circle { cx: "12", cy: "12", r: "10" }
+                                    path { d: "M12 16v-4" }
+                                    path { d: "M12 8h.01" }
+                                }
+                            }
+                        }
+                        SegmentedControl {
+                            value: sides(),
+                            disabled: is_generating,
+                            options: vec![(Sides::Single, "Single"), (Sides::Double, "Double")],
+                            on_change: move |v| sides.set(v)
+                        }
+
+                        if sides() == Sides::Double && back_labels().len() > 1 {
+                            div { class: "flex items-center gap-2",
+                                label { class: "text-xs md:text-sm text-gray-600 shrink-0", "Card Back" }
                                 select {
                                     disabled: is_generating,
-                                    class: "p-2 border border-gray-300 rounded-md outline-none focus:ring-2 focus:ring-blue-400 bg-white text-xs md:text-sm h-[38px] shrink-0",
-                                    value: match custom_unit() {
-                                        CustomUnit::In => "in",
-                                        CustomUnit::Cm => "cm",
-                                    },
+                                    class: "w-full py-1.5 md:py-2 px-2 border border-gray-300 rounded-md bg-white outline-none focus:ring-2 focus:ring-blue-400 text-xs md:text-sm",
+                                    value: back_label().or(default_back_label()).unwrap_or_default(),
                                     onchange: move |evt| {
-                                        let val = match evt.value().as_str() {
-                                            "cm" => CustomUnit::Cm,
-                                            _ => CustomUnit::In,
-                                        };
-                                        custom_unit.set(val);
+                                        let chosen = evt.value();
+                                        back_label
+                                            .set(back_labels().into_iter().find(|label| *label == chosen));
                                     },
-                                    option { value: "in", "in" }
-                                    option { value: "cm", "cm" }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                div { class: "flex flex-col gap-1 md:gap-2",
-                    label { class: "text-xs md:text-sm font-medium text-gray-700", "Cut Lines" }
-                    SegmentedControl {
-                        value: cut_lines(),
-                        disabled: is_generating,
-                        options: vec![
-                            (CutLines::None, "None"),
-                            (CutLines::Margins, "Margins"),
-                            (CutLines::FullPage, "Full Page"),
-                        ],
-                        on_change: move |v| cut_lines.set(v)
-                    }
-
-                    if cut_lines() == CutLines::FullPage {
-                        {
-                            let is_invalid = thickness_value().is_none();
-                            let base = "w-full p-2 border rounded-md outline-none focus:ring-2 text-xs md:text-sm transition-all";
-                            let state = if is_invalid {
-                                "border-red-500 focus:ring-red-400 bg-red-50"
-                            } else {
-                                "border-gray-300 focus:ring-blue-400 bg-white"
-                            };
-                            rsx! {
-                                div { class: "flex items-center gap-2 pt-1",
-                                    label { class: "text-xs md:text-sm text-gray-600 shrink-0", "Thickness (pt)" }
-                                    input {
-                                        disabled: is_generating,
-                                        class: "{base} {state}",
-                                        type: "text",
-                                        value: "{cut_line_thickness()}",
-                                        oninput: move |evt| cut_line_thickness.set(evt.value().clone())
-                                    }
-                                }
-                                if is_invalid {
-                                    span { class: "text-xs text-red-500 font-medium",
-                                        "Enter a number between {MIN_CUT_LINE_THICKNESS} and {MAX_CUT_LINE_THICKNESS}"
+                                    for label in back_labels() {
+                                        option { value: "{label}", "{display_label(label)}" }
                                     }
                                 }
                             }
                         }
                     }
-                }
-
-                div { class: "flex flex-col gap-1 md:gap-2",
-                    div { class: "flex items-center gap-2",
-                        label { class: "text-xs md:text-sm font-medium text-gray-700", "Print Layout" }
-                        button {
-                            id: "print-layout-info-btn",
-                            class: "text-gray-400 hover:text-blue-500 transition-colors focus:outline-none",
-                            onclick: move |_| {
-                                spawn(async move {
-                                    let mut eval = dioxus::document::eval(
-                                        "
-                                        let el = document.getElementById('print-layout-info-btn');
-                                        let rect = el.getBoundingClientRect();
-                                        dioxus.send([rect.x, rect.y, rect.width]);
-                                        ",
-                                    );
-                                    if let Ok((x, y, w)) = eval.recv::<(f64, f64, f64)>().await {
-                                        props.on_open_info.call((x, y, w));
-                                    }
-                                });
-                            },
-                            svg {
-                                xmlns: "http://www.w3.org/2000/svg",
-                                width: "18",
-                                height: "18",
-                                view_box: "0 0 24 24",
-                                fill: "none",
-                                stroke: "currentColor",
-                                stroke_width: "2",
-                                stroke_linecap: "round",
-                                stroke_linejoin: "round",
-                                circle { cx: "12", cy: "12", r: "10" }
-                                path { d: "M12 16v-4" }
-                                path { d: "M12 8h.01" }
-                            }
+                } else {
+                    p { class: "text-xs md:text-sm text-gray-600",
+                        "For help on printing, have a look at the "
+                        a {
+                            href: instructions_href,
+                            target: "_blank",
+                            class: "text-blue-500 hover:text-blue-700 hover:underline",
+                            "instructions"
                         }
-                    }
-                    SegmentedControl {
-                        value: print_layout(),
-                        disabled: is_generating,
-                        options: vec![
-                            (PrintLayout::EdgeToEdge, "Edge"),
-                            (PrintLayout::Gap, "Gap"),
-                            (PrintLayout::SmallMargin, "S Margin"),
-                            (PrintLayout::LargeMargin, "L Margin"),
-                        ],
-                        on_change: move |v| print_layout.set(v)
                     }
                 }
             }
 
             div { class: "mt-auto pt-4 md:pt-0 flex flex-col gap-2",
                 if show_donate() {
-                    div { class: "text-sm text-center text-gray-600 pb-1",
-                        "finding this site useful? please consider "
+                    div { class: "hidden md:block text-sm text-center text-gray-600 pb-1",
+                        "Finding this site useful? Please consider "
                         a {
                             href: "https://ko-fi.com/axmccx",
                             target: "_blank",
                             class: "text-blue-500 hover:text-blue-700 hover:underline",
                             "donating"
+                        }
+                    }
+                    div { class: "hidden md:block text-sm text-center text-gray-600 pb-1",
+                        "Issues? Report it "
+                        a {
+                            href: "https://github.com/axmccx/proxynexus-rs/issues/new",
+                            target: "_blank",
+                            class: "text-blue-500 hover:text-blue-700 hover:underline",
+                            "here"
                         }
                     }
                 }
@@ -472,6 +614,8 @@ pub fn ExportControls(props: ExportControlsProps) -> Element {
                                                         print_layout: print_layout(),
                                                         cut_line_thickness: thickness,
                                                         upscale: upscale(),
+                                                        double_sided: sides() == Sides::Double,
+                                                        back_label: back_label(),
                                                     })
                                                 }
                                             };
@@ -509,4 +653,18 @@ fn set_has_generated() {
             let _ = local_storage.set_item("proxynexus_has_generated", "true");
         }
     }
+}
+
+fn display_label(label: &str) -> String {
+    label
+        .split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

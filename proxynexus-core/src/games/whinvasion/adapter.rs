@@ -2,12 +2,18 @@
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::Result;
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::whinvasion::models::{WhiCard, WhiPack};
-use crate::mpc::CardBackProvider;
+#[cfg(not(target_arch = "wasm32"))]
 use async_trait::async_trait;
+
+/// Every Warhammer Invasion card carries the same back, so the game has one
+/// back group. Race is a card attribute, not a reverse.
+#[cfg(not(target_arch = "wasm32"))]
+const WHI_BACK_GROUP: &str = "card";
 
 pub struct WhiAdapter {}
 
@@ -37,23 +43,12 @@ impl GameAdapterInfo for WhiAdapter {
     }
 }
 
-/// Warhammer Invasion is a symmetric two-player
-///  faction game -- every card, regardless of type or
-/// faction, uses the same single generic card back. So there's no
-/// per-card classification needed.  Every `Card` just gets this one
-/// constant, which must stay a substring of the filename registered in
-/// `WhiAdapter::fetch_card_backs` below for `mpc.rs`'s generic-back
-/// fallback matching to find it.
-#[cfg(not(target_arch = "wasm32"))]
-const WHI_BACK_TYPE: &str = "warhammer_invasion_card_back";
-
 /// Turns the flat `whi_full.json` card list into catalog rows.
 ///
-/// No double-sided cards and no linked/mechanically-different backs exist
-/// in this game -- confirmed against the actual collection (1133 cards,
-/// 1133 images, zero `~back` files) and the source data (no linked-card
-/// field at all), so each `WhiCard` maps 1:1 to one physical card with the
-/// one generic back, and `linked_card_*` is always `None`.
+/// No double-sided cards exist in this game -- confirmed against the
+/// actual collection (1133 cards, 1133 images, zero `~back` files), so
+/// each `WhiCard` maps 1:1 to one physical card with a single generic
+/// back (see `WhiAdapter::fetch_card_backs`).
 #[cfg(not(target_arch = "wasm32"))]
 fn build_cards_and_versions(
     whi_cards: Vec<crate::games::whinvasion::models::WhiCard>,
@@ -66,11 +61,7 @@ fn build_cards_and_versions(
             id: card.unique_id.clone(),
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
-            side: Some(card.race),
-            back_type: Some(WHI_BACK_TYPE.to_string()),
-            linked_card_code: None,
-            linked_card_name: None,
-            linked_card_back_type: None,
+            back_group: Some(WHI_BACK_GROUP.to_string()),
         });
 
         card_versions.push(CardVersion {
@@ -78,6 +69,7 @@ fn build_cards_and_versions(
             pack_id: card.pack_code,
             quantity: card.card_quantity.unwrap_or(1),
             position: card.card_number,
+            api_id: None,
         });
     }
 
@@ -117,48 +109,6 @@ impl CatalogProvider for WhiAdapter {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl CardBackProvider for WhiAdapter {
-    async fn fetch_card_backs(&self) -> Result<Vec<(String, Vec<u8>)>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Ok(vec![(
-                "warhammer_invasion_card_back.png".to_string(),
-                include_bytes!("../../../assets/warhammer_invasion_card_back.png").to_vec(),
-            )])
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            use futures::future::join_all;
-            use gloo_net::http::Request;
-
-            let filenames = ["warhammer_invasion_card_back.png"];
-
-            let fetch_futures = filenames.iter().map(|filename| async move {
-                let url = format!("card_backs/{}", filename);
-                let response = Request::get(&url).send().await?;
-
-                if !response.ok() {
-                    return Err(crate::error::ProxyNexusError::Internal(format!(
-                        "Failed to fetch {}: HTTP {}",
-                        url,
-                        response.status()
-                    )));
-                }
-
-                let bytes = response.binary().await?;
-
-                Ok((filename.to_string(), bytes))
-            });
-
-            let results: Vec<Result<(String, Vec<u8>)>> = join_all(fetch_futures).await;
-            results.into_iter().collect()
-        }
-    }
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
@@ -177,14 +127,14 @@ mod tests {
     }
 
     #[test]
-    fn maps_unique_id_pack_code_and_race_onto_card_and_version() {
+    fn maps_unique_id_and_pack_code_onto_card_and_version() {
         let (cards, versions) = build_cards_and_versions(vec![card("10013", "Unit", "Orc")]);
 
         assert_eq!(cards.len(), 1);
         assert_eq!(versions.len(), 1);
         assert_eq!(cards[0].id, "10013");
         assert_eq!(cards[0].title, "Card 10013");
-        assert_eq!(cards[0].side.as_deref(), Some("Orc"));
+        assert_eq!(cards[0].back_group.as_deref(), Some("card"));
         assert_eq!(versions[0].card_id, "10013");
         assert_eq!(versions[0].pack_id, "core-set");
     }
@@ -214,30 +164,5 @@ mod tests {
         let (_, versions) = build_cards_and_versions(vec![raw]);
 
         assert_eq!(versions[0].position, Some(118));
-    }
-
-    #[test]
-    fn every_card_gets_the_same_generic_back_type_regardless_of_type() {
-        // Every card_type should classify identically.
-        let raw = vec![
-            card("a", "Unit", "Orc"),
-            card("b", "Quest", "Dwarf"),
-            card("c", "Fulcrum", "Empire"),
-            card("d", "Legend", "Chaos"),
-        ];
-        let (cards, _) = build_cards_and_versions(raw);
-
-        for c in &cards {
-            assert_eq!(c.back_type.as_deref(), Some(WHI_BACK_TYPE));
-        }
-    }
-
-    #[test]
-    fn no_card_ever_gets_linked_card_metadata() {
-        let (cards, _) = build_cards_and_versions(vec![card("10013", "Unit", "Orc")]);
-
-        assert_eq!(cards[0].linked_card_code, None);
-        assert_eq!(cards[0].linked_card_name, None);
-        assert_eq!(cards[0].linked_card_back_type, None);
     }
 }

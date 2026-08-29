@@ -1,7 +1,7 @@
 use crate::components::card_list_input::CardListInput;
 use async_lock::Mutex;
 use dioxus::prelude::*;
-use proxynexus_core::card_store::CardStore;
+use proxynexus_core::card_store::{AvailablePack, CardStore};
 use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::games::get_decklist_adapter;
 use std::sync::Arc;
@@ -96,7 +96,7 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
                 let packs = store.get_available_packs().await.unwrap_or_default();
                 packs
                     .into_iter()
-                    .filter(|(_, _, meta)| !meta.contains("no printings available"))
+                    .filter(|pack| pack.printable > 0)
                     .collect::<Vec<_>>()
             }
             Err(_) => Vec::new(),
@@ -106,13 +106,13 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
     // Re-sorts the already-fetched pack list in the GUI layer when the
     // radio buttons change, rather than re-querying the DB -- the list is
     // small (at most a few hundred packs) and already in memory.
+    // get_available_packs() already returns newest-first, so the
+    // ReleaseDate mode needs no reordering; only Alphabetical does.
     let sorted_sets = use_memo(move || {
-        let mut sets: Vec<(String, String, String)> =
+        let mut sets: Vec<AvailablePack> =
             available_sets.read().as_ref().cloned().unwrap_or_default();
-        match set_sort_mode() {
-            // get_available_packs() returns oldest-first; reverse for newest-first.
-            SetSortMode::ReleaseDate => sets.reverse(),
-            SetSortMode::Alphabetical => sets.sort_by_key(|a| a.0.to_lowercase()),
+        if set_sort_mode() == SetSortMode::Alphabetical {
+            sets.sort_by_key(|pack| pack.name.to_lowercase());
         }
         sets
     });
@@ -132,7 +132,7 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
 
     rsx! {
         div {
-            class: "flex flex-col flex-none h-[160px] md:flex-1 md:h-auto p-4 w-full",
+            class: "flex flex-col flex-none h-[160px] md:flex-1 md:h-auto px-4 pt-2 pb-4 w-full",
 
             div { class: "flex border-b border-gray-200 mb-4 shrink-0",
                 button {
@@ -218,9 +218,18 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
                             set_name.set(evt.value());
                             source_state.set(ActiveSource::SetName(evt.value()));
                         },
-                        option { value: "", disabled: true, "Select a set..." }
-                        for (name, _code, _meta) in sorted_sets() {
-                            option { value: "{name}", "{name}" }
+                        option {
+                            value: "",
+                            disabled: true,
+                            selected: set_name().is_empty(),
+                            "Select a set..."
+                        }
+                        for pack in sorted_sets() {
+                            option {
+                                value: "{pack.name}",
+                                selected: pack.name == set_name(),
+                                "{pack.name}"
+                            }
                         }
                     }
                 },

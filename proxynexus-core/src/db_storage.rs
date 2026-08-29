@@ -42,11 +42,7 @@ struct CardDbRow {
     game_id: String,
     title: String,
     title_normalized: String,
-    side: Option<String>,
-    back_type: Option<String>,
-    linked_card_code: Option<String>,
-    linked_card_name: Option<String>,
-    linked_card_back_type: Option<String>,
+    back_group: Option<String>,
 }
 
 #[derive(FromGlueRow)]
@@ -56,6 +52,7 @@ struct CardVersionDbRow {
     pack_id: String,
     quantity: i64,
     position: Option<i64>,
+    api_id: Option<String>,
 }
 
 #[derive(FromGlueRow)]
@@ -66,7 +63,7 @@ struct PrintingDbRow {
     version_id: Option<String>,
     variant: Option<String>,
     file_path: String,
-    part: String,
+    side: String,
     has_bleed: bool,
 }
 
@@ -173,11 +170,7 @@ impl DbStorage {
                 game_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 title_normalized TEXT NOT NULL,
-                side TEXT,
-                back_type TEXT,
-                linked_card_code TEXT,
-                linked_card_name TEXT,
-                linked_card_back_type TEXT
+                back_group TEXT
             );
 
             CREATE TABLE IF NOT EXISTS card_versions (
@@ -185,7 +178,8 @@ impl DbStorage {
                 card_id TEXT NOT NULL,
                 pack_id TEXT NOT NULL,
                 quantity INTEGER NOT NULL,
-                position INTEGER
+                position INTEGER,
+                api_id TEXT
             );
 
             CREATE TABLE IF NOT EXISTS printings (
@@ -195,14 +189,14 @@ impl DbStorage {
                 version_id TEXT,
                 variant TEXT,
                 file_path TEXT NOT NULL,
-                part TEXT NOT NULL,
+                side TEXT NOT NULL,
                 has_bleed BOOLEAN DEFAULT FALSE
             );
             ",
         )
         .await?;
 
-        // Additive migration for databases created before `back_type`
+        // Additive migration for databases created before `back_group`
         // existed -- `CREATE TABLE IF NOT EXISTS` above only applies to
         // brand-new databases, so an already-existing `cards` table needs
         // the column added explicitly. Best-effort: the only realistic
@@ -211,16 +205,7 @@ impl DbStorage {
         // want, so any error here is intentionally ignored rather than
         // propagated.
         let _ = self
-            .execute("ALTER TABLE cards ADD COLUMN back_type TEXT")
-            .await;
-        let _ = self
-            .execute("ALTER TABLE cards ADD COLUMN linked_card_code TEXT")
-            .await;
-        let _ = self
-            .execute("ALTER TABLE cards ADD COLUMN linked_card_name TEXT")
-            .await;
-        let _ = self
-            .execute("ALTER TABLE cards ADD COLUMN linked_card_back_type TEXT")
+            .execute("ALTER TABLE cards ADD COLUMN back_group TEXT")
             .await;
 
         Ok(())
@@ -281,43 +266,23 @@ impl DbStorage {
             let rows: Vec<CardDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, side, back_type, linked_card_code, linked_card_name, linked_card_back_type) VALUES ",
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
                     .map(|row| {
-                        let side = row
-                            .side
-                            .as_ref()
-                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
-                        let back_type = row
-                            .back_type
-                            .as_ref()
-                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
-                        let linked_card_code = row
-                            .linked_card_code
-                            .as_ref()
-                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
-                        let linked_card_name = row
-                            .linked_card_name
-                            .as_ref()
-                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
-                        let linked_card_back_type = row
-                            .linked_card_back_type
+                        let back_group = row
+                            .back_group
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         format!(
-                            "({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.api_id),
                             quote_sql_string(&row.game_id),
                             quote_sql_string(&row.title),
                             quote_sql_string(&row.title_normalized),
-                            side,
-                            back_type,
-                            linked_card_code,
-                            linked_card_name,
-                            linked_card_back_type
+                            back_group
                         )
                     })
                     .collect();
@@ -331,20 +296,25 @@ impl DbStorage {
             let rows: Vec<CardVersionDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ",
+                    "INSERT INTO card_versions (id, card_id, pack_id, quantity, position, api_id) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
                     .map(|row| {
                         let position_val =
                             row.position.map_or("NULL".to_string(), |p| p.to_string());
+                        let api_id_val = row
+                            .api_id
+                            .as_ref()
+                            .map_or("NULL".to_string(), |a| quote_sql_string(a));
                         format!(
-                            "({}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.card_id),
                             quote_sql_string(&row.pack_id),
                             row.quantity,
-                            position_val
+                            position_val,
+                            api_id_val
                         )
                     })
                     .collect();
@@ -394,7 +364,7 @@ impl DbStorage {
         if let Some(payload) = print_payloads.into_iter().next() {
             let rows: Vec<PrintingDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
-                sql.push_str("INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, part, has_bleed) VALUES ");
+                sql.push_str("INSERT INTO printings (id, collection_id, card_id, version_id, variant, file_path, side, has_bleed) VALUES ");
                 let values: Vec<String> = chunk
                     .iter()
                     .map(|row| {
@@ -414,7 +384,7 @@ impl DbStorage {
                             version_id,
                             variant,
                             quote_sql_string(&row.file_path),
-                            quote_sql_string(&row.part),
+                            quote_sql_string(&row.side),
                             if row.has_bleed { "TRUE" } else { "FALSE" }
                         )
                     })

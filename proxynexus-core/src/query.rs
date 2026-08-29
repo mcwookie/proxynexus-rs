@@ -9,25 +9,35 @@ pub async fn list_available_sets(db: &mut DbStorage, game: &str) -> Result<Strin
     let mut store = CardStore::new(db, game.to_string())?;
     let sets = store.get_available_packs().await?;
 
-    let max_name_len = sets
-        .iter()
-        .map(|(name, _, _)| name.len())
-        .max()
-        .unwrap_or(0);
-    let max_override_len = sets
-        .iter()
-        .map(|(_, code, _)| code.len() + 2)
-        .max()
-        .unwrap_or(0);
+    let max_name_len = sets.iter().map(|s| s.name.len()).max().unwrap_or(0);
+    let max_override_len = sets.iter().map(|s| s.id.len() + 2).max().unwrap_or(0);
 
     let lines: Vec<String> = sets
         .iter()
-        .map(|(name, code, meta)| {
-            let pack_override = format!("[{}]", code);
+        .map(|set| {
+            let own: i64 = set
+                .collections
+                .iter()
+                .filter_map(|c| c.split_whitespace().next()?.parse::<i64>().ok())
+                .sum();
+            let meta = if set.printable == 0 {
+                "# no printings available".to_string()
+            } else {
+                let mut parts = set.collections.clone();
+                if set.printable > own {
+                    parts.push(format!("{} from other sets", set.printable - own));
+                }
+                format!(
+                    "# {} of {} — {}",
+                    set.printable,
+                    set.total,
+                    parts.join(", ")
+                )
+            };
             format!(
                 "  - {:name_width$} {:override_width$}    {}",
-                name,
-                pack_override,
+                set.name,
+                format!("[{}]", set.id),
                 meta,
                 name_width = max_name_len,
                 override_width = max_override_len
@@ -102,11 +112,7 @@ pub fn apply_variant_overrides(
         let mut resolved = p.clone();
         if let Some(over_str) = override_str
             && let Some(variants) = available.get(&title_norm)
-            && let Some(variant_p) = variants.iter().find(|v| {
-                let p_display = v.pack_id.as_deref().or(v.variant.as_deref()).unwrap_or("");
-                let v_str = format!("{}:{}", p_display, v.collection);
-                v_str == *over_str
-            })
+            && let Some(variant_p) = variants.iter().find(|v| v.variant_key() == *over_str)
         {
             resolved = variant_p.clone();
         }
@@ -150,15 +156,11 @@ fn format_query_output(
         let resolved_p = CardStore::select_printing(req, printings)?;
         let count = counts.get(key).unwrap_or(&1);
 
-        let printing_display = resolved_p
-            .pack_id
-            .as_deref()
-            .or(resolved_p.variant.as_deref())
-            .unwrap_or("official");
-
         let base = format!(
-            "{}x {} [{}:{}]",
-            count, resolved_p.card_title, printing_display, resolved_p.collection,
+            "{}x {} [{}]",
+            count,
+            resolved_p.card_title,
+            resolved_p.variant_key(),
         );
 
         max_base_len = max_base_len.max(base.len());
@@ -169,15 +171,9 @@ fn format_query_output(
                 p.variant != resolved_p.variant
                     || p.collection != resolved_p.collection
                     || p.pack_id != resolved_p.pack_id
+                    || p.position != resolved_p.position
             })
-            .map(|p| {
-                let p_display = p
-                    .pack_id
-                    .as_deref()
-                    .or(p.variant.as_deref())
-                    .unwrap_or("official");
-                format!("[{}:{}]", p_display, p.collection)
-            })
+            .map(|p| format!("[{}]", p.variant_key()))
             .collect();
 
         lines_data.push((base, alternatives));
@@ -203,7 +199,7 @@ fn format_query_output(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Printing;
+    use crate::models::{CardSide, Printing};
     use std::collections::HashMap;
 
     fn mock_printing(
@@ -218,17 +214,16 @@ mod tests {
             card_id: code.into(),
             is_official,
             variant: variant.map(|v| v.to_string()),
-            image_key: format!("{}.jpg", code),
-            bleed_image_key: None,
-            parts: Vec::new(),
+            front: CardSide {
+                image_key: Some(format!("{}.jpg", code)),
+                bleed_image_key: None,
+            },
+            backs: Vec::new(),
             collection: coll.into(),
-            side: "runner".into(),
+            back_group: "runner".into(),
             pack_id: pack.map(|p| p.to_string()),
             date_release: None,
-            back_type: None,
-            linked_card_code: None,
-            linked_card_name: None,
-            linked_card_back_type: None,
+            position: None,
         }
     }
 
@@ -243,7 +238,7 @@ mod tests {
         available.insert("sure_gamble".into(), vec![base_p.clone(), alt_p.clone()]);
 
         let mut global_overrides = HashMap::new();
-        global_overrides.insert("sure_gamble".into(), "alt1:standard".into());
+        global_overrides.insert("sure_gamble".into(), "alt1::standard".into());
 
         let result = apply_variant_overrides(&base, &available, &global_overrides, &HashMap::new());
         assert_eq!(result.len(), 2);
@@ -267,7 +262,7 @@ mod tests {
 
         let mut index_overrides = HashMap::new();
         // Override only the second occurrence (index 1)
-        index_overrides.insert(("sure_gamble".into(), 1), "alt1:standard".into());
+        index_overrides.insert(("sure_gamble".into(), 1), "alt1::standard".into());
 
         let result = apply_variant_overrides(&base, &available, &HashMap::new(), &index_overrides);
         assert_eq!(result.len(), 2);
@@ -296,10 +291,10 @@ mod tests {
         );
 
         let mut global_overrides = HashMap::new();
-        global_overrides.insert("sure_gamble".into(), "alt1:standard".into());
+        global_overrides.insert("sure_gamble".into(), "alt1::standard".into());
 
         let mut index_overrides = HashMap::new();
-        index_overrides.insert(("sure_gamble".into(), 1), "promo:special".into());
+        index_overrides.insert(("sure_gamble".into(), 1), "promo::special".into());
 
         let result =
             apply_variant_overrides(&base, &available, &global_overrides, &index_overrides);
@@ -335,7 +330,7 @@ mod tests {
         );
 
         let mut global_overrides = HashMap::new();
-        global_overrides.insert("vis_hero".into(), "alt1:standard".into());
+        global_overrides.insert("vis_hero".into(), "alt1::standard".into());
 
         let result = apply_variant_overrides(&base, &available, &global_overrides, &HashMap::new());
         assert_eq!(result.len(), 2);

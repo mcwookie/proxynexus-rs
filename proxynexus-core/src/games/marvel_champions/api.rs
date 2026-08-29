@@ -148,6 +148,7 @@ pub async fn fetch_decklist_from_marvelcdb(url: &str) -> Result<Decklist> {
                 card_id,
                 pack_id: None,
                 quantity,
+                position: None,
             })
         })
         .collect();
