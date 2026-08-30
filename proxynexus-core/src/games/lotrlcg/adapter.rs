@@ -148,6 +148,9 @@ impl CatalogProvider for LotrLcgAdapter {
                     title,
                     title_normalized: base_normalized,
                     back_group: Some(back_group.to_string()),
+                    linked_card_code: None,
+                    linked_card_name: None,
+                    linked_card_back_group: None,
                 });
             }
 
@@ -196,6 +199,9 @@ impl CatalogProvider for LotrLcgAdapter {
                     title: rc.name,
                     title_normalized: base_normalized,
                     back_group: Some(back_group.to_string()),
+                    linked_card_code: None,
+                    linked_card_name: None,
+                    linked_card_back_group: None,
                 });
             }
 
@@ -258,6 +264,9 @@ impl CatalogProvider for LotrLcgAdapter {
                     title: rc.name,
                     title_normalized: base_normalized,
                     back_group: Some(back_group.to_string()),
+                    linked_card_code: None,
+                    linked_card_name: None,
+                    linked_card_back_group: None,
                 });
             }
 

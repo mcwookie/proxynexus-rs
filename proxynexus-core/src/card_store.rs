@@ -62,11 +62,14 @@ struct AvailablePrintingRow {
     file_path: String,
     side: String,
     name: String,
-    back_group: String,
+    back_group: Option<String>,
     pack_id: Option<String>,
     has_bleed: bool,
     date_release: Option<String>,
     position: Option<i64>,
+    linked_card_code: Option<String>,
+    linked_card_name: Option<String>,
+    linked_card_back_group: Option<String>,
 }
 
 #[derive(Hash, PartialEq, Eq, Debug)]
@@ -694,7 +697,10 @@ impl<'a> CardStore<'a> {
                 pks.api_id as pack_id,
                 p.has_bleed,
                 pks.date_release,
-                v.position
+                v.position,
+                c.linked_card_code,
+                c.linked_card_name,
+                c.linked_card_back_group
              FROM printings p
              JOIN cards c ON p.card_id = c.id
              JOIN collections col ON p.collection_id = col.id
@@ -771,6 +777,9 @@ impl<'a> CardStore<'a> {
             let is_official = first_row.is_official;
             let back_group = first_row.back_group.clone();
             let date_release = first_row.date_release.clone();
+            let linked_card_code = first_row.linked_card_code.clone();
+            let linked_card_name = first_row.linked_card_name.clone();
+            let linked_card_back_group = first_row.linked_card_back_group.clone();
 
             let mut by_side: HashMap<String, Vec<AvailablePrintingRow>> = HashMap::new();
             for row in rows {
@@ -802,6 +811,9 @@ impl<'a> CardStore<'a> {
                 pack_id: key.pack_id,
                 date_release,
                 position: key.position,
+                linked_card_code,
+                linked_card_name,
+                linked_card_back_group,
             };
 
             resolved_printings
@@ -915,11 +927,14 @@ mod tests {
             file_path: file_path.into(),
             side: side.into(),
             name: "nr-ffg".into(),
-            back_group: "corp".into(),
+            back_group: Some("corp".into()),
             pack_id: Some("the_valley".into()),
             has_bleed: false,
             date_release: None,
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         }
     }
 
@@ -991,10 +1006,13 @@ mod tests {
             },
             backs: Vec::new(),
             collection: coll.into(),
-            back_group: "runner".into(),
+            back_group: Some("runner".into()),
             pack_id: pack.map(|p| p.to_string()),
             date_release: date.map(|s| s.to_string()),
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         }
     }
 
@@ -1317,10 +1335,13 @@ mod tests {
             },
             backs: Vec::new(),
             collection: "enhanced".into(),
-            back_group: "player".into(),
+            back_group: Some("player".into()),
             pack_id: Some("two_player_limited_edition_starter".into()),
             date_release: Some("2013-01-01".into()),
             position: Some(4),
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         };
         let gandalf_37 = Printing {
             front: CardSide {
@@ -1560,11 +1581,14 @@ mod tests {
             file_path: "l5r/collection/fine-katana@core.jpg".into(),
             side: "front".into(),
             name: "collection".into(),
-            back_group: "test".into(),
+            back_group: Some("test".into()),
             pack_id: Some("core".into()),
             date_release: Some("2017-10-05".into()),
             has_bleed: false,
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         };
         let row2 = AvailablePrintingRow {
             title: "Fine Katana".into(),
@@ -1574,11 +1598,14 @@ mod tests {
             file_path: "l5r/collection/fine-katana@emerald-core-set.jpg".into(),
             side: "front".into(),
             name: "collection".into(),
-            back_group: "test".into(),
+            back_group: Some("test".into()),
             pack_id: Some("emerald-core-set".into()),
             date_release: Some("2021-10-21".into()),
             has_bleed: false,
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         };
 
         let result = CardStore::assemble_printings(vec![row1, row2]);
@@ -1605,11 +1632,14 @@ mod tests {
             file_path: "lotrlcg/enhanced/gandalf_1_tples@tples.jpg".into(),
             side: "front".into(),
             name: "enhanced".into(),
-            back_group: "player".into(),
+            back_group: Some("player".into()),
             pack_id: Some("two_player_limited_edition_starter".into()),
             date_release: Some("2013-01-01".into()),
             has_bleed: false,
             position: Some(4),
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         };
         let row_37 = AvailablePrintingRow {
             title: "Gandalf".into(),
@@ -1619,11 +1649,14 @@ mod tests {
             file_path: "lotrlcg/enhanced/gandalf_2_tples@tples.jpg".into(),
             side: "front".into(),
             name: "enhanced".into(),
-            back_group: "player".into(),
+            back_group: Some("player".into()),
             pack_id: Some("two_player_limited_edition_starter".into()),
             date_release: Some("2013-01-01".into()),
             has_bleed: false,
             position: Some(37),
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         };
 
         let result = CardStore::assemble_printings(vec![row_4, row_37]);

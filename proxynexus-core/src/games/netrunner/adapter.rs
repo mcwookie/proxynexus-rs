@@ -63,6 +63,9 @@ impl CatalogProvider for NetrunnerAdapter {
                 title: card.attributes.title.clone(),
                 title_normalized: normalize_title(&card.attributes.title),
                 back_group: Some(card.attributes.side_id),
+                linked_card_code: None,
+                linked_card_name: None,
+                linked_card_back_group: None,
             })
             .collect();
 

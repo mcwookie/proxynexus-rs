@@ -12,6 +12,7 @@ pub mod error;
 pub mod file_naming;
 pub mod games;
 pub mod image_provider;
+pub mod manifest;
 pub mod models;
 pub mod mpc;
 pub mod pdf;

@@ -37,10 +37,19 @@ pub struct Printing {
     pub front: CardSide,
     pub backs: Vec<CardSide>,
     pub collection: String,
-    pub back_group: String,
+    /// `None` when the game adapter can't classify this card's back (e.g.
+    /// an unclassified type_code) -- treated like a real, unclassified
+    /// card back group by every consumer (no generic back is looked up,
+    /// the card prints with a blank reverse), not an error condition.
+    pub back_group: Option<String>,
     pub pack_id: Option<String>,
     pub date_release: Option<String>,
     pub position: Option<i64>,
+    /// See `catalog::Card::linked_card_code`'s doc comment. Fork-only,
+    /// consumed by `manifest.rs`.
+    pub linked_card_code: Option<String>,
+    pub linked_card_name: Option<String>,
+    pub linked_card_back_group: Option<String>,
 }
 
 impl CardSide {
@@ -180,10 +189,13 @@ mod tests {
             },
             backs: Vec::new(),
             collection: "enhanced".into(),
-            back_group: "player".into(),
+            back_group: Some("player".into()),
             pack_id: pack_id.map(|p| p.to_string()),
             date_release: None,
             position,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         }
     }
 

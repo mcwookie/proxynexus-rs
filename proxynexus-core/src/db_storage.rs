@@ -43,6 +43,9 @@ struct CardDbRow {
     title: String,
     title_normalized: String,
     back_group: Option<String>,
+    linked_card_code: Option<String>,
+    linked_card_name: Option<String>,
+    linked_card_back_group: Option<String>,
 }
 
 #[derive(FromGlueRow)]
@@ -170,7 +173,10 @@ impl DbStorage {
                 game_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 title_normalized TEXT NOT NULL,
-                back_group TEXT
+                back_group TEXT,
+                linked_card_code TEXT,
+                linked_card_name TEXT,
+                linked_card_back_group TEXT
             );
 
             CREATE TABLE IF NOT EXISTS card_versions (
@@ -206,6 +212,33 @@ impl DbStorage {
         // propagated.
         let _ = self
             .execute("ALTER TABLE cards ADD COLUMN back_group TEXT")
+            .await;
+        // `printings.part` was renamed to `side` in the same schema change
+        // that introduced `back_group` above, but `CREATE TABLE IF NOT
+        // EXISTS` is a no-op against an already-existing table -- without
+        // this, every pre-existing database keeps the old `part` column and
+        // every query against `side` fails outright (not just a missing
+        // value: the column itself doesn't exist). Best-effort for the same
+        // reason as above: reruns hit "no such column: part" once renamed,
+        // which is the no-op we want.
+        let _ = self
+            .execute("ALTER TABLE printings RENAME COLUMN part TO side")
+            .await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_code TEXT")
+            .await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_name TEXT")
+            .await;
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN linked_card_back_group TEXT")
+            .await;
+        // Same gap as `back_group` above, on `card_versions` instead of
+        // `cards` -- `api_id` was added to the `CREATE TABLE IF NOT EXISTS`
+        // above without a matching migration, so every pre-existing
+        // database's `card_versions` table lacks the column entirely.
+        let _ = self
+            .execute("ALTER TABLE card_versions ADD COLUMN api_id TEXT")
             .await;
 
         Ok(())
@@ -266,7 +299,7 @@ impl DbStorage {
             let rows: Vec<CardDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group) VALUES ",
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group, linked_card_code, linked_card_name, linked_card_back_group) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
@@ -275,14 +308,29 @@ impl DbStorage {
                             .back_group
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_code = row
+                            .linked_card_code
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_name = row
+                            .linked_card_name
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let linked_card_back_group = row
+                            .linked_card_back_group
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         format!(
-                            "({}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.api_id),
                             quote_sql_string(&row.game_id),
                             quote_sql_string(&row.title),
                             quote_sql_string(&row.title_normalized),
-                            back_group
+                            back_group,
+                            linked_card_code,
+                            linked_card_name,
+                            linked_card_back_group
                         )
                     })
                     .collect();

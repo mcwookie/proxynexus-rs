@@ -220,10 +220,13 @@ mod tests {
             },
             backs: Vec::new(),
             collection: coll.into(),
-            back_group: "runner".into(),
+            back_group: Some("runner".into()),
             pack_id: pack.map(|p| p.to_string()),
             date_release: None,
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         }
     }
 

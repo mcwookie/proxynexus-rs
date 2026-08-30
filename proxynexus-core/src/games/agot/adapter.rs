@@ -72,6 +72,9 @@ impl CatalogProvider for AgotAdapter {
                         title: c.label.clone(), // Use label as title for clarity
                         title_normalized: normalized_id.clone(),
                         back_group: Some("card".to_string()),
+                        linked_card_code: None,
+                        linked_card_name: None,
+                        linked_card_back_group: None,
                     },
                 );
             }

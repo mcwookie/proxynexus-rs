@@ -6,6 +6,7 @@ use proxynexus_core::collection_builder::build_collection;
 use proxynexus_core::collection_manager::CollectionManager;
 use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::image_provider::LocalImageProvider;
+use proxynexus_core::manifest::{build_manifest, manifest_to_csv, manifest_to_json};
 use proxynexus_core::models::Printing;
 use proxynexus_core::mpc::generate_mpc_zip;
 use proxynexus_core::pdf::{
@@ -13,7 +14,7 @@ use proxynexus_core::pdf::{
     PdfOptions, generate_pdf,
 };
 use proxynexus_core::query::{generate_query_output, list_available_sets};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::info;
 use web_time::Instant;
 
@@ -168,6 +169,14 @@ enum GenerateType {
 
         #[arg(long)]
         upscale: bool,
+
+        /// Cardstock for the companion mpc-autofill order XML.
+        #[arg(long, default_value = "s33")]
+        stock: String,
+
+        /// Foil finish for the companion mpc-autofill order XML.
+        #[arg(long)]
+        foil: bool,
     },
     Bleed {
         #[arg(short, long)]
@@ -430,6 +439,37 @@ async fn get_printings_from_source(
         .context("Failed to resolve printings")
 }
 
+/// Writes a CSV and a JSON manifest alongside `output_path`, listing each
+/// printing's card back group so it can be cross-referenced when physically
+/// printing the generated PDF/MPC output.
+fn write_manifest_files(printings: &[Printing], output_path: &Path) -> anyhow::Result<()> {
+    let entries = build_manifest(printings);
+    let stem = output_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "output".to_string());
+    let dir = output_path.parent().filter(|p| !p.as_os_str().is_empty());
+    let manifest_path = |ext: &str| match dir {
+        Some(dir) => dir.join(format!("{}_manifest.{}", stem, ext)),
+        None => PathBuf::from(format!("{}_manifest.{}", stem, ext)),
+    };
+
+    let csv_path = manifest_path("csv");
+    std::fs::write(&csv_path, manifest_to_csv(&entries))
+        .with_context(|| format!("Failed to write manifest CSV to {:?}", csv_path))?;
+
+    let json_path = manifest_path("json");
+    let json = manifest_to_json(&entries).context("Failed to serialize manifest JSON")?;
+    std::fs::write(&json_path, json)
+        .with_context(|| format!("Failed to write manifest JSON to {:?}", json_path))?;
+
+    println!(
+        "Card back manifest written: {:?}, {:?}",
+        csv_path, json_path
+    );
+    Ok(())
+}
+
 async fn handle_generate(
     db: &mut DbStorage,
     game: &str,
@@ -492,12 +532,14 @@ async fn handle_generate(
                 }
             }
 
-            let pdf_bytes = generate_pdf(printings, image_provider, game, pdf_options, None)
-                .await
-                .context("Failed to generate PDF")?;
+            let pdf_bytes =
+                generate_pdf(printings.clone(), image_provider, game, pdf_options, None)
+                    .await
+                    .context("Failed to generate PDF")?;
 
             std::fs::write(&output_path, pdf_bytes)
                 .with_context(|| format!("Failed to write PDF to {:?}", output_path))?;
+            write_manifest_files(&printings, &output_path)?;
             println!("PDF created successfully: {:?}", output_path);
             Ok(())
         }
@@ -508,17 +550,31 @@ async fn handle_generate(
             decklist_url,
             output_path,
             upscale,
+            stock,
+            foil,
         } => {
+            let stock_enum = parse_stock(&stock).context("Invalid cardstock option")?;
             let source = determine_input_source(cardlist, set_name, decklist_url);
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
 
+            // Manifest CSV/JSON and the mpc-autofill order XML get bundled
+            // into the same ZIP as the card images below instead of being
+            // written as separate files alongside it -- so build the
+            // manifest content here rather than via write_manifest_files
+            // (which writes straight to disk, used by the PDF path above).
+            let manifest_entries = build_manifest(&printings);
+            let manifest_csv = manifest_to_csv(&manifest_entries);
+            let manifest_json =
+                manifest_to_json(&manifest_entries).context("Failed to serialize manifest JSON")?;
+
             let card_backs = proxynexus_core::card_backs::fetch_card_backs(game)
                 .await
                 .unwrap_or_default();
 
-            let mpc_bytes = generate_mpc_zip(
+            let mpc_output = generate_mpc_zip(
+                game,
                 printings,
                 image_provider,
                 proxynexus_core::mpc::MpcOptions { upscale },
@@ -528,10 +584,34 @@ async fn handle_generate(
             .await
             .context("Failed to generate MPC ZIP")?;
 
-            std::fs::write(&output_path, mpc_bytes)
+            let autofill_xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
+                &mpc_output.autofill_slots,
+                proxynexus_core::mpc::MpcAutofillOptions {
+                    stock: stock_enum,
+                    foil,
+                },
+            );
+
+            let combined_zip = proxynexus_core::mpc::append_files_to_zip(
+                mpc_output.zip_bytes,
+                &[
+                    (
+                        "proxynexus_export_mpc_autofill.xml",
+                        autofill_xml.as_bytes(),
+                    ),
+                    ("proxynexus_export_manifest.csv", manifest_csv.as_bytes()),
+                    ("proxynexus_export_manifest.json", manifest_json.as_bytes()),
+                ],
+            )
+            .context("Failed to bundle manifest/xml into MPC zip")?;
+
+            std::fs::write(&output_path, combined_zip)
                 .with_context(|| format!("Failed to write ZIP to {:?}", output_path))?;
             info!("runtime: {:?}", start.elapsed());
-            println!("MPC ZIP created successfully: {:?}", output_path);
+            println!(
+                "MPC ZIP created successfully (includes manifest CSV/JSON and mpc-autofill XML): {:?}",
+                output_path
+            );
             Ok(())
         }
         GenerateType::Bleed { input_dir } => {
@@ -628,6 +708,21 @@ fn parse_cut_lines(cut_lines: Option<&str>) -> anyhow::Result<CutLines> {
         Some(unsupported) => Err(anyhow!(
             "Unsupported cut lines option: '{}'. Options are 'none', 'margins', or 'fullpage'",
             unsupported
+        )),
+    }
+}
+
+fn parse_stock(stock: &str) -> anyhow::Result<proxynexus_core::mpc::Cardstock> {
+    use proxynexus_core::mpc::Cardstock;
+    match stock {
+        "s27" => Ok(Cardstock::S27),
+        "s30" => Ok(Cardstock::S30),
+        "s33" => Ok(Cardstock::S33),
+        "m31" => Ok(Cardstock::M31),
+        "p10" => Ok(Cardstock::P10),
+        _ => Err(anyhow!(
+            "Unsupported cardstock: '{}'. Options are 's27', 's30', 's33', 'm31', 'p10'",
+            stock
         )),
     }
 }

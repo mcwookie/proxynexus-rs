@@ -30,6 +30,14 @@ pub struct Card {
     pub title: String,
     pub title_normalized: String,
     pub back_group: Option<String>,
+    /// Set when this card's physical back is a mechanically different card
+    /// (e.g. Arkham Horror's Carl Sanford, or a Marvel Champions hero's
+    /// alter-ego) rather than a generic back or the flip side of the same
+    /// identity. Fork-only metadata, consumed by `manifest.rs`; upstream's
+    /// schema has no equivalent. `None` for the vast majority of cards.
+    pub linked_card_code: Option<String>,
+    pub linked_card_name: Option<String>,
+    pub linked_card_back_group: Option<String>,
 }
 
 pub struct CardVersion {
@@ -160,15 +168,30 @@ impl<'a> CatalogManager<'a> {
                 .back_group
                 .as_ref()
                 .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_code = card
+                .linked_card_code
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_name = card
+                .linked_card_name
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
+            let linked_card_back_group = card
+                .linked_card_back_group
+                .as_ref()
+                .map_or("NULL".to_string(), |s| quote_sql_string(s));
             let db_card_id = format!("{}_{}", catalog.game_id, card.id);
             let q = format!(
-                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group) VALUES ({}, {}, {}, {}, {}, {})",
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group, linked_card_code, linked_card_name, linked_card_back_group) VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})",
                 quote_sql_string(&db_card_id),
                 quote_sql_string(&card.id),
                 quote_sql_string(&catalog.game_id),
                 quote_sql_string(&card.title),
                 quote_sql_string(&card.title_normalized),
-                back_group
+                back_group,
+                linked_card_code,
+                linked_card_name,
+                linked_card_back_group
             );
             self.db.execute(&q).await?;
         }

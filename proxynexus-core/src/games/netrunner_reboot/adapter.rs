@@ -70,6 +70,9 @@ impl CatalogProvider for NetrunnerRebootAdapter {
                 title: c.title.clone(),
                 title_normalized: card_id.clone(),
                 back_group: Some(c.side_code),
+                linked_card_code: None,
+                linked_card_name: None,
+                linked_card_back_group: None,
             });
 
             versions.push(CardVersion {

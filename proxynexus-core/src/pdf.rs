@@ -474,12 +474,21 @@ fn back_slot(
         return Slot::from_side(back, preferred);
     }
 
-    let group = &card.printing.back_group;
-    if let Some(back) = crate::card_backs::card_back(game_id, group, label) {
+    // `None` means the adapter couldn't classify this card at all -- there's
+    // no group to look a back up under, so it goes straight to blank
+    // (same outcome as a classified group with no matching CardBack asset).
+    let group = card
+        .printing
+        .back_group
+        .as_deref()
+        .unwrap_or("unclassified");
+    if card.printing.back_group.is_some()
+        && let Some(back) = crate::card_backs::card_back(game_id, group, label)
+    {
         return Slot::CardBack(back.asset_id, back.has_bleed);
     }
 
-    if unbacked_groups.insert(group.clone()) {
+    if unbacked_groups.insert(group.to_string()) {
         warn!(
             "No card back for the '{}' back group, so those cards print with a blank reverse.",
             group
@@ -1076,10 +1085,13 @@ mod tests {
                 .map(|name| side(&format!("{}.png", name)))
                 .collect(),
             collection: "nsg".into(),
-            back_group: back_group.into(),
+            back_group: Some(back_group.into()),
             pack_id: Some("system_gateway".into()),
             date_release: None,
             position: None,
+            linked_card_code: None,
+            linked_card_name: None,
+            linked_card_back_group: None,
         }
     }
 
@@ -1272,6 +1284,21 @@ mod tests {
                 (1, collection("back.png")),
             ]
         );
+    }
+
+    #[test]
+    fn an_unclassified_card_prints_with_a_blank_reverse_not_an_error() {
+        // back_group: None means the adapter couldn't classify the card at
+        // all (e.g. an unrecognized type_code) -- distinct from a
+        // classified group this game just ships no back for.
+        let unclassified = Printing {
+            back_group: None,
+            ..card(&[], "netrunner")
+        };
+        let options = duplex(PageSize::Letter, CutLines::Margins);
+        let pages = pages_for(&[unclassified], &options);
+
+        assert_eq!(pages[1][0].1, Slot::Blank);
     }
 
     #[test]

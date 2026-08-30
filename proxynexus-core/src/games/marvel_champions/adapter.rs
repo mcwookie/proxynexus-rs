@@ -113,11 +113,10 @@ fn back_group_for(type_code: &str) -> Option<String> {
 /// this: 69 hero cards across the whole catalog carry a `back_link`, all
 /// following this shape.
 ///
-/// TODO: `card.back_link` itself isn't represented yet under the new
-/// back_group/CardSide model (it used to only feed `linked_card_*`
-/// metadata, dropped along with the rest of that struct). The actual back
-/// *image* still resolves fine regardless, via the existing
-/// `{card_id}@{pack_id}~back` filename convention.
+/// `card.back_link` has no analogue in the new back_group/CardSide model, so
+/// it's carried here as fork-only metadata for `manifest.rs` instead --
+/// purely informational, since the back *image* already resolves
+/// independently via the `{card_id}@{pack_id}~back` filename convention.
 #[cfg(not(target_arch = "wasm32"))]
 fn build_cards_and_versions(
     mcdb_cards: &[crate::games::marvel_champions::models::McdbCard],
@@ -125,16 +124,26 @@ fn build_cards_and_versions(
     let mut cards = Vec::with_capacity(mcdb_cards.len());
     let mut card_versions = Vec::with_capacity(mcdb_cards.len());
 
+    let by_code: std::collections::HashMap<
+        &str,
+        &crate::games::marvel_champions::models::McdbCard,
+    > = mcdb_cards.iter().map(|c| (c.code.as_str(), c)).collect();
+
     for card in mcdb_cards {
         if card.hidden == Some(true) {
             continue;
         }
+
+        let linked = card.back_link.as_deref().and_then(|code| by_code.get(code));
 
         cards.push(Card {
             id: card.code.clone(),
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
             back_group: back_group_for(&card.type_code),
+            linked_card_code: card.back_link.clone(),
+            linked_card_name: linked.map(|l| l.name.clone()),
+            linked_card_back_group: linked.and_then(|l| back_group_for(&l.type_code)),
         });
 
         card_versions.push(CardVersion {
@@ -273,5 +282,31 @@ mod tests {
         assert_eq!(versions.len(), 2);
         assert_eq!(cards[0].back_group.as_deref(), Some("player"));
         assert_eq!(cards[1].back_group.as_deref(), Some("encounter"));
+    }
+
+    #[test]
+    fn a_heros_linked_alter_ego_is_surfaced_as_manifest_metadata() {
+        let raw = vec![
+            hero("26001a", "Vision", "26001b"),
+            alter_ego("26001b", "Vision", "26001a"),
+        ];
+        let (cards, _) = build_cards_and_versions(&raw);
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].linked_card_code.as_deref(), Some("26001b"));
+        assert_eq!(cards[0].linked_card_name.as_deref(), Some("Vision"));
+        // alter_ego() fixture uses type_code "alter_ego", a PLAYER_TYPES entry.
+        assert_eq!(cards[0].linked_card_back_group.as_deref(), Some("player"));
+    }
+
+    #[test]
+    fn a_card_with_no_back_link_has_no_linked_card_metadata() {
+        let raw = vec![plain_encounter_card("01140", "Ultron Drones")];
+        let (cards, _) = build_cards_and_versions(&raw);
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].linked_card_code, None);
+        assert_eq!(cards[0].linked_card_name, None);
+        assert_eq!(cards[0].linked_card_back_group, None);
     }
 }
