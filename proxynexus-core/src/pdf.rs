@@ -705,9 +705,13 @@ mod tests {
 
     #[test]
     fn thickness_constants_are_ordered_and_positive() {
-        assert!(MIN_CUT_LINE_THICKNESS > 0.0);
-        assert!(MIN_CUT_LINE_THICKNESS < DEFAULT_CUT_LINE_THICKNESS);
-        assert!(DEFAULT_CUT_LINE_THICKNESS < MAX_CUT_LINE_THICKNESS);
+        // All three operands are consts, so clippy can (and, as of 1.98,
+        // does) verify these at compile time -- moved into `const` blocks
+        // per its own suggestion rather than silenced, since that turns a
+        // violation into a build failure instead of a test failure.
+        const { assert!(MIN_CUT_LINE_THICKNESS > 0.0) };
+        const { assert!(MIN_CUT_LINE_THICKNESS < DEFAULT_CUT_LINE_THICKNESS) };
+        const { assert!(DEFAULT_CUT_LINE_THICKNESS < MAX_CUT_LINE_THICKNESS) };
     }
 
     #[test]
