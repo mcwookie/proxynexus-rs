@@ -1,0 +1,31 @@
+name: Rebuild proxynexus-package web image
+
+# proxynexus-package's docker-build.yml checks out this repo's master
+# fresh but only runs on its own pushes / manual dispatch. Ping it so a
+# push here rebuilds and republishes ghcr.io/mcwookie/proxynexus-package.
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger proxynexus-package image build
+        env:
+          # Fine-grained PAT scoped to mcwookie/proxynexus-package with
+          # Contents: write (required by the repository_dispatch endpoint).
+          # GITHUB_TOKEN can't trigger workflows in another repo.
+          GH_TOKEN: ${{ secrets.PACKAGE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PACKAGE_DISPATCH_TOKEN not set -- skipping. Add it under" \
+                 "Settings -> Secrets and variables -> Actions to enable auto-rebuild."
+            exit 0
+          fi
+          gh api repos/mcwookie/proxynexus-package/dispatches \
+            -f event_type=proxynexus-rs-updated \
+            -F 'client_payload[sha]=${{ github.sha }}'
