@@ -17,7 +17,7 @@ type WgpuBackend = burn_wgpu::Wgpu<f32, i32>;
 
 #[cfg(target_arch = "wasm32")]
 type PendingRequestsMap =
-    Rc<RefCell<HashMap<String, futures::channel::oneshot::Sender<Result<Vec<u8>>>>>>;
+    Rc<RefCell<HashMap<String, futures::channel::oneshot::Sender<Result<image::RgbImage>>>>>;
 
 #[derive(Debug)]
 struct InferenceState {
@@ -86,12 +86,12 @@ pub async fn probe_webgpu() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn upscale_image(bytes: &[u8]) -> Result<Vec<u8>> {
-    upscale_image_inner(bytes).await
+pub async fn upscale_image(bytes: &[u8], max: (u32, u32)) -> Result<image::RgbImage> {
+    upscale_image_inner(bytes, max).await
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn upscale_image(bytes: &[u8]) -> Result<Vec<u8>> {
+pub async fn upscale_image(bytes: &[u8], max: (u32, u32)) -> Result<image::RgbImage> {
     use js_sys::{Object, Reflect, Uint8Array};
 
     let (worker, pending_requests) = get_or_init_worker().await?;
@@ -113,6 +113,8 @@ pub async fn upscale_image(bytes: &[u8]) -> Result<Vec<u8>> {
     let js_image_array = Uint8Array::from(bytes_vec.as_slice());
     let js_image_buffer = js_image_array.buffer();
     Reflect::set(&js_request, &"bytes".into(), &js_image_array.into()).unwrap();
+    Reflect::set(&js_request, &"maxWidth".into(), &max.0.into()).unwrap();
+    Reflect::set(&js_request, &"maxHeight".into(), &max.1.into()).unwrap();
 
     let buffers_to_transfer = js_sys::Array::of1(&js_image_buffer);
 
@@ -133,13 +135,27 @@ pub async fn upscale_image(bytes: &[u8]) -> Result<Vec<u8>> {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub async fn upscale_in_worker(
     bytes: js_sys::Uint8Array,
-) -> std::result::Result<Vec<u8>, wasm_bindgen::JsValue> {
+    max_width: u32,
+    max_height: u32,
+) -> std::result::Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
+    use js_sys::{Object, Reflect, Uint8Array};
+
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     let raw_bytes = bytes.to_vec();
-    let result = upscale_image_inner(&raw_bytes)
+    let img = upscale_image_inner(&raw_bytes, (max_width, max_height))
         .await
         .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
-    Ok(result)
+
+    let (width, height) = img.dimensions();
+    let out = Object::new();
+    Reflect::set(
+        &out,
+        &"bytes".into(),
+        &Uint8Array::from(img.into_raw().as_slice()),
+    )?;
+    Reflect::set(&out, &"width".into(), &width.into())?;
+    Reflect::set(&out, &"height".into(), &height.into())?;
+    Ok(out.into())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -177,7 +193,22 @@ async fn get_or_init_worker() -> Result<(web_sys::Worker, PendingRequestsMap)> {
             if let Some(sender) = pending_requests_msg.borrow_mut().remove(&id) {
                 let bytes_val = Reflect::get(&data, &"bytes".into()).unwrap();
                 let array = js_sys::Uint8Array::unchecked_from_js(bytes_val);
-                let _ = sender.send(Ok(array.to_vec()));
+                let dim = |key: &str| {
+                    Reflect::get(&data, &key.into())
+                        .ok()
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or_default() as u32
+                };
+
+                let _ = sender.send(
+                    image::RgbImage::from_raw(dim("width"), dim("height"), array.to_vec())
+                        .ok_or_else(|| {
+                            ProxyNexusError::Internal(
+                                "Worker returned pixels that do not match its dimensions"
+                                    .to_string(),
+                            )
+                        }),
+                );
             }
         } else if msg_type == "error" {
             let id_val = Reflect::get(&data, &"id".into()).unwrap_or(JsValue::NULL);
@@ -288,7 +319,7 @@ async fn get_or_init_worker() -> Result<(web_sys::Worker, PendingRequestsMap)> {
     Ok((worker, pending_requests))
 }
 
-async fn upscale_image_inner(bytes: &[u8]) -> Result<Vec<u8>> {
+async fn upscale_image_inner(bytes: &[u8], max: (u32, u32)) -> Result<image::RgbImage> {
     let img = image::load_from_memory(bytes)?;
     let img_rgb = img.to_rgb8();
 
@@ -317,7 +348,22 @@ async fn upscale_image_inner(bytes: &[u8]) -> Result<Vec<u8>> {
         .await?;
 
     let out_img = process_tiled(&img_rgb, &state.model, &state.device).await?;
-    finalize_upscale_img(out_img)
+    Ok(cap_to(out_img, max))
+}
+
+fn cap_to(img: image::RgbImage, (max_w, max_h): (u32, u32)) -> image::RgbImage {
+    let (w, h) = img.dimensions();
+    let scale = (max_w as f32 / w as f32).min(max_h as f32 / h as f32);
+    if scale >= 1.0 {
+        return img;
+    }
+
+    image::imageops::resize(
+        &img,
+        (w as f32 * scale).round() as u32,
+        (h as f32 * scale).round() as u32,
+        image::imageops::FilterType::Lanczos3,
+    )
 }
 
 async fn process_tiled<B: Backend>(
@@ -414,17 +460,6 @@ async fn run_inference<B: Backend>(
         .to_vec::<f32>()
         .map_err(|e| ProxyNexusError::Internal(format!("Data conversion failed: {}", e)))?;
     Ok(out_data)
-}
-
-fn finalize_upscale_img(out_img: image::RgbImage) -> Result<Vec<u8>> {
-    let mut cursor = std::io::Cursor::new(Vec::new());
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 95);
-
-    out_img
-        .write_with_encoder(encoder)
-        .map_err(|e| ProxyNexusError::Internal(e.to_string()))?;
-
-    Ok(cursor.into_inner())
 }
 
 async fn fetch_model_weights() -> Result<Vec<u8>> {

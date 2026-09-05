@@ -4,6 +4,7 @@ use crate::components::source_selector::ActiveSource;
 use anyhow::Context;
 use async_lock::Mutex;
 use dioxus::prelude::*;
+use proxynexus_core::card_backs;
 use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
 use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::mpc::{MpcOptions, generate_mpc_zip};
@@ -176,10 +177,17 @@ pub async fn run_export(
     #[cfg(target_arch = "wasm32")]
     let image_provider_result = Ok(proxynexus_core::image_provider::RemoteImageProvider);
 
-    let mut mpc_autofill_slots: Option<Vec<proxynexus_core::mpc::AutofillSlot>> = None;
+    let allowed_labels = match &resolved_printings {
+        Ok(printings) => {
+            let db_arc = db_signal.read().clone();
+            let mut db = db_arc.lock().await;
+            card_backs::allowed_labels(&mut db, &active_game_id, printings).await
+        }
+        Err(_) => Ok(Vec::new()),
+    };
 
-    let result = match (resolved_printings, image_provider_result) {
-        (Ok(printings), Ok(image_provider)) => match options {
+    let result = match (resolved_printings, image_provider_result, allowed_labels) {
+        (Ok(printings), Ok(image_provider), Ok(labels)) => match options {
             ExportOptions::Pdf(pdf_opts) => generate_pdf(
                 printings,
                 &image_provider,
@@ -190,12 +198,11 @@ pub async fn run_export(
             .await
             .context("PDF generation failed"),
             ExportOptions::Mpc(mpc_opts) => {
-                let card_backs = proxynexus_core::card_backs::fetch_card_backs(&active_game_id)
+                let card_backs = card_backs::fetch_card_backs(&active_game_id, &labels)
                     .await
                     .unwrap_or_default();
 
-                match generate_mpc_zip(
-                    &active_game_id,
+                generate_mpc_zip(
                     printings,
                     &image_provider,
                     mpc_opts,
@@ -203,17 +210,14 @@ pub async fn run_export(
                     progress_callback,
                 )
                 .await
-                {
-                    Ok(mpc_output) => {
-                        mpc_autofill_slots = Some(mpc_output.autofill_slots);
-                        Ok(mpc_output.zip_bytes)
-                    }
-                    Err(e) => Err(e).context("MPC ZIP generation failed"),
-                }
+                .context("MPC ZIP generation failed")
             }
         },
-        (Err(e), _) => Err(e),
-        (_, Err(e)) => Err(e),
+        (Err(e), _, _) => Err(e),
+        (_, Err(e), _) => Err(e),
+        (_, _, Err(e)) => {
+            Err(anyhow::Error::from(e).context("Failed to read card back restrictions"))
+        }
     };
 
     let duration = start_time.elapsed();
@@ -255,66 +259,36 @@ pub async fn run_export(
     });
 
     if let Ok(bytes) = result {
-        if let Some(slots) = mpc_autofill_slots {
-            // MPC exports bundle the manifest CSV/JSON and the mpc-autofill
-            // order XML into the same zip as the card images, so there's
-            // one download instead of four. No stock/foil picker in the
-            // GUI yet -- (S33) Superior Smooth, non-foil, matching the
-            // CLI's own default.
-            let xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
-                &slots,
-                proxynexus_core::mpc::MpcAutofillOptions {
-                    stock: proxynexus_core::mpc::Cardstock::S33,
-                    foil: false,
-                },
-            );
+        // An MPC export can bake its own manifest.csv/manifest.json into the
+        // zip via MpcOptions::include_manifest (see mpc.rs) -- these
+        // fork-only sibling downloads are for the PDF path (which has no
+        // such option) and as a convenience when that wasn't requested.
+        if let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await {
+            error!("Failed to save {}: {:?}", meta.format, e);
+        }
 
-            let mut extra_files: Vec<(&str, &[u8])> =
-                vec![("proxynexus_export_mpc_autofill.xml", xml.as_bytes())];
-            if let Some((csv, json)) = &manifest_files {
-                extra_files.push(("proxynexus_export_manifest.csv", csv.as_bytes()));
-                extra_files.push(("proxynexus_export_manifest.json", json.as_bytes()));
-            }
-
-            match proxynexus_core::mpc::append_files_to_zip(bytes, &extra_files) {
-                Ok(combined) => {
-                    if let Err(e) =
-                        save_file(&combined, meta.filename, meta.filter, meta.ext, meta.mime).await
-                    {
-                        error!("Failed to save {}: {:?}", meta.format, e);
-                    }
-                }
-                Err(e) => error!("Failed to bundle manifest/xml into MPC zip: {:?}", e),
-            }
-        } else {
-            if let Err(e) = save_file(&bytes, meta.filename, meta.filter, meta.ext, meta.mime).await
+        if let Some((csv, json)) = manifest_files {
+            if let Err(e) = save_file(
+                csv.as_bytes(),
+                "proxynexus_export_manifest.csv",
+                "CSV",
+                "csv",
+                "text/csv",
+            )
+            .await
             {
-                error!("Failed to save {}: {:?}", meta.format, e);
+                error!("Failed to save card back manifest CSV: {:?}", e);
             }
-
-            if let Some((csv, json)) = manifest_files {
-                if let Err(e) = save_file(
-                    csv.as_bytes(),
-                    "proxynexus_export_manifest.csv",
-                    "CSV",
-                    "csv",
-                    "text/csv",
-                )
-                .await
-                {
-                    error!("Failed to save card back manifest CSV: {:?}", e);
-                }
-                if let Err(e) = save_file(
-                    json.as_bytes(),
-                    "proxynexus_export_manifest.json",
-                    "JSON",
-                    "json",
-                    "application/json",
-                )
-                .await
-                {
-                    error!("Failed to save card back manifest JSON: {:?}", e);
-                }
+            if let Err(e) = save_file(
+                json.as_bytes(),
+                "proxynexus_export_manifest.json",
+                "JSON",
+                "json",
+                "application/json",
+            )
+            .await
+            {
+                error!("Failed to save card back manifest JSON: {:?}", e);
             }
         }
     }

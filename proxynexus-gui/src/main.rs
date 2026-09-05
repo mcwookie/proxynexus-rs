@@ -17,6 +17,8 @@ pub mod analytics;
 mod components;
 mod export;
 use components::about_modal::AboutModal;
+use components::autofill_info::AutofillInfo;
+use components::disclaimer_modal::DisclaimerModal;
 use components::export_controls::ExportControls;
 use components::preview_grid::PreviewGrid;
 use components::print_layout_info::PrintLayoutInfo;
@@ -413,10 +415,21 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
     let mut open_variant_selector = use_signal(|| None::<VariantSelectorState>);
     let mut is_overrides_reset_pending = use_signal(|| false);
     let mut is_about_open = use_signal(|| false);
+    let mut is_disclaimer_open = use_signal(|| {
+        #[cfg(target_arch = "wasm32")]
+        {
+            true
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            false
+        }
+    });
     let mut show_copy_toast = use_signal(|| false);
     let mut print_layout_info_pos = use_signal(|| None::<(f64, f64, f64)>);
     let mut sides_info_pos = use_signal(|| None::<(f64, f64, f64)>);
     let mut upscale_info_pos = use_signal(|| None::<(f64, f64, f64)>);
+    let mut autofill_info_pos = use_signal(|| None::<(f64, f64, f64)>);
 
     use_effect(move || {
         let current_source = active_source();
@@ -508,6 +521,26 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
             }
             Err(e) => Some(Err(format!("{:?}", e))),
         }
+    });
+
+    let back_labels = use_resource(move || async move {
+        let Some(game_id) = active_game_id() else {
+            return Vec::new();
+        };
+        let printings = match ordered_printings
+            .read()
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+        {
+            Some((_, printings, _, _)) => printings.clone(),
+            None => Vec::new(),
+        };
+
+        let db_arc = db_signal.read().clone();
+        let mut db = db_arc.lock().await;
+        proxynexus_core::card_backs::allowed_labels(&mut db, &game_id, &printings)
+            .await
+            .unwrap_or_default()
     });
 
     // Grouped by card_id, not title -- two different official cards can
@@ -730,7 +763,8 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                     on_open_info: move |pos| print_layout_info_pos.set(Some(pos)),
                     on_open_upscale_info: move |pos| upscale_info_pos.set(Some(pos)),
                     on_open_sides_info: move |pos| sides_info_pos.set(Some(pos)),
-                    active_game_id,
+                    on_open_autofill_info: move |pos| autofill_info_pos.set(Some(pos)),
+                    back_labels,
                     on_generate: move |options: export::ExportOptions| {
                         let source = active_source();
                         if let Some(game_id) = active_game_id() {
@@ -756,6 +790,12 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 }
             }
 
+            if is_disclaimer_open() {
+                DisclaimerModal {
+                    on_close: move |_| is_disclaimer_open.set(false),
+                }
+            }
+
             if let Some(pos) = print_layout_info_pos() {
                 PrintLayoutInfo {
                     pos,
@@ -774,6 +814,13 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 UpscaleInfo {
                     pos,
                     on_close: move |_| upscale_info_pos.set(None),
+                }
+            }
+
+            if let Some(pos) = autofill_info_pos() {
+                AutofillInfo {
+                    pos,
+                    on_close: move |_| autofill_info_pos.set(None),
                 }
             }
 

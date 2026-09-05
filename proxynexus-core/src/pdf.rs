@@ -308,25 +308,33 @@ pub async fn generate_pdf(
             };
 
             if !image_cache.contains_key(&image_key) {
-                let mut image_data = slot.load(image_provider).await?;
+                let raw = slot.load(image_provider).await?;
+                let format = image::guess_format(&raw).unwrap_or(ImageFormat::Jpeg);
 
-                if options.upscale && slot.upscalable() {
-                    image_data = crate::upscale_image(&image_data).await?
-                }
+                let upscaled = if options.upscale && slot.upscalable() {
+                    let max = crate::print_prep::max_upscale_size(slot.has_bleed());
+                    Some(crate::upscale_image(&raw, max).await?)
+                } else {
+                    None
+                };
 
-                if slot.has_bleed() {
-                    let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
-                    let img = image::load_from_memory(&image_data)?;
-                    let cropped = crate::print_prep::crop_bleed_border(&img, bleed_ratio).to_rgb8();
-                    image_data = crate::print_prep::encode_image(cropped, format)?;
-                } else if bleed_ratio > 0.0 {
-                    let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
-                    let img = image::load_from_memory(&image_data)?;
-                    let bled = crate::print_prep::add_uniform_bleed_border(&img, bleed_ratio);
-                    image_data = crate::print_prep::encode_image(bled, format)?;
-                }
-
-                let format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
+                let image_data = if slot.has_bleed() || bleed_ratio > 0.0 {
+                    let img = match upscaled {
+                        Some(rgb) => image::DynamicImage::ImageRgb8(rgb),
+                        None => image::load_from_memory(&raw)?,
+                    };
+                    let prepared = if slot.has_bleed() {
+                        crate::print_prep::crop_bleed_border(&img, bleed_ratio).to_rgb8()
+                    } else {
+                        crate::print_prep::add_uniform_bleed_border(&img, bleed_ratio)
+                    };
+                    crate::print_prep::encode_image(prepared, format)?
+                } else {
+                    match upscaled {
+                        Some(rgb) => crate::print_prep::encode_image(rgb, format)?,
+                        None => raw,
+                    }
+                };
 
                 let image = if format == ImageFormat::Png {
                     Image::from_png(Data::from(image_data), true)
@@ -475,15 +483,16 @@ fn back_slot(
     }
 
     // `None` means the adapter couldn't classify this card at all -- there's
-    // no group to look a back up under, so it goes straight to blank
-    // (same outcome as a classified group with no matching CardBack asset).
+    // no group to look a back up under, so it goes straight to blank (same
+    // outcome as a classified group this game just ships no back for). Never
+    // collides with a real registered back_group, which is always a specific
+    // classification like "player"/"encounter".
     let group = card
         .printing
         .back_group
         .as_deref()
         .unwrap_or("unclassified");
-    if card.printing.back_group.is_some()
-        && let Some(back) = crate::card_backs::card_back(game_id, group, label)
+    if let Some(back) = label.and_then(|label| crate::card_backs::card_back(game_id, group, label))
     {
         return Slot::CardBack(back.asset_id, back.has_bleed);
     }
@@ -696,9 +705,9 @@ mod tests {
 
     #[test]
     fn thickness_constants_are_ordered_and_positive() {
-        const { assert!(MIN_CUT_LINE_THICKNESS > 0.0) };
-        const { assert!(MIN_CUT_LINE_THICKNESS < DEFAULT_CUT_LINE_THICKNESS) };
-        const { assert!(DEFAULT_CUT_LINE_THICKNESS < MAX_CUT_LINE_THICKNESS) };
+        assert!(MIN_CUT_LINE_THICKNESS > 0.0);
+        assert!(MIN_CUT_LINE_THICKNESS < DEFAULT_CUT_LINE_THICKNESS);
+        assert!(DEFAULT_CUT_LINE_THICKNESS < MAX_CUT_LINE_THICKNESS);
     }
 
     #[test]
@@ -1269,8 +1278,11 @@ mod tests {
     }
 
     #[test]
-    fn duplex_falls_back_to_the_games_standard_back() {
-        let options = duplex(PageSize::Letter, CutLines::Margins);
+    fn duplex_uses_the_games_standard_back_for_cards_without_one() {
+        let options = PdfOptions {
+            back_label: Some("proxy"),
+            ..duplex(PageSize::Letter, CutLines::Margins)
+        };
         let pages = pages_in(
             &[card(&[], "corp"), card(&["back"], "runner")],
             &options,
@@ -1287,32 +1299,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unclassified_card_prints_with_a_blank_reverse_not_an_error() {
-        // back_group: None means the adapter couldn't classify the card at
-        // all (e.g. an unrecognized type_code) -- distinct from a
-        // classified group this game just ships no back for.
-        let unclassified = Printing {
-            back_group: None,
-            ..card(&[], "netrunner")
-        };
+    fn a_game_with_backs_still_blanks_when_no_label_was_chosen() {
+        // Callers resolve the label from what the request may use, so a
+        // withheld one never arrives here and there is nothing to fall back on.
         let options = duplex(PageSize::Letter, CutLines::Margins);
-        let pages = pages_for(&[unclassified], &options);
+        let pages = pages_in(&[card(&[], "corp")], &options, "netrunner");
 
         assert_eq!(pages[1][0].1, Slot::Blank);
-    }
-
-    #[test]
-    fn a_named_back_label_reaches_the_page() {
-        let options = PdfOptions {
-            back_label: Some("original"),
-            ..duplex(PageSize::Letter, CutLines::Margins)
-        };
-        let pages = pages_in(&[card(&[], "runner")], &options, "netrunner");
-
-        assert_eq!(
-            pages[1][0].1,
-            Slot::CardBack("netrunner_runner_original.png", false)
-        );
     }
 
     #[test]

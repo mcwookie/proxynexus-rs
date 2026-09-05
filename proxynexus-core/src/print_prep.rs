@@ -5,6 +5,8 @@ const CUT_WIDTH: f32 = 744.0;
 const CUT_HEIGHT: f32 = 1038.0;
 const BLEED_WIDTH: f32 = 816.0;
 const BLEED_HEIGHT: f32 = 1110.0;
+const MAX_IMAGE_WIDTH: f32 = 2176.0;
+const MAX_IMAGE_HEIGHT: f32 = 2960.0;
 
 #[derive(Debug, Clone)]
 struct BleedConfig {
@@ -89,6 +91,17 @@ pub fn add_mpc_bleed_border(img: &DynamicImage) -> RgbImage {
     generate_bleed(&working_img, &config)
 }
 
+pub fn max_upscale_size(has_bleed: bool) -> (u32, u32) {
+    if has_bleed {
+        (MAX_IMAGE_WIDTH as u32, MAX_IMAGE_HEIGHT as u32)
+    } else {
+        (
+            (MAX_IMAGE_WIDTH * CUT_WIDTH / BLEED_WIDTH).round() as u32,
+            (MAX_IMAGE_HEIGHT * CUT_HEIGHT / BLEED_HEIGHT).round() as u32,
+        )
+    }
+}
+
 fn generate_bleed(src: &RgbImage, config: &BleedConfig) -> RgbImage {
     let (src_w, src_h) = src.dimensions();
     let src_raw = src.as_raw();
@@ -123,25 +136,6 @@ fn generate_bleed(src: &RgbImage, config: &BleedConfig) -> RgbImage {
     }
 
     image::ImageBuffer::from_raw(config.output_width, config.output_height, dest_raw).unwrap()
-}
-
-// changes a few pixels near top left corner, based on position.
-// makes the duplicate image unique, so that MPC doesn't deduplicate it on upload
-pub fn apply_uniqueness_marker(img: &mut RgbImage, position: u32) {
-    let r_add = ((position * 73) % 256) as u8;
-    let g_add = ((position * 137) % 256) as u8;
-    let b_add = ((position * 193) % 256) as u8;
-
-    for y in 0..2 {
-        for x in 0..2 {
-            if x < img.width() && y < img.height() {
-                let pixel = img.get_pixel_mut(x, y);
-                pixel.0[0] = pixel.0[0].wrapping_add(r_add);
-                pixel.0[1] = pixel.0[1].wrapping_add(g_add);
-                pixel.0[2] = pixel.0[2].wrapping_add(b_add);
-            }
-        }
-    }
 }
 
 pub fn encode_image(bordered: RgbImage, format: ImageFormat) -> Result<Vec<u8>> {
@@ -319,35 +313,52 @@ mod tests {
         assert_eq!(config.bleed_y, 24);
     }
 
-    #[test]
-    fn test_uniqueness_marker_bounds() {
-        let mut img = RgbImage::new(10, 10);
-        apply_uniqueness_marker(&mut img, 0);
-        apply_uniqueness_marker(&mut img, 5);
-        apply_uniqueness_marker(&mut img, 100);
+    /// What `cap_to` in the upscaler does with the size this hands it.
+    fn cap(w: u32, h: u32, max: (u32, u32)) -> (u32, u32) {
+        let scale = (max.0 as f32 / w as f32).min(max.1 as f32 / h as f32);
+        if scale >= 1.0 {
+            return (w, h);
+        }
+        (
+            (w as f32 * scale).round() as u32,
+            (h as f32 * scale).round() as u32,
+        )
     }
 
     #[test]
-    fn test_apply_uniqueness_marker_hashes() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    fn a_bled_source_is_capped_at_the_full_bleed_size() {
+        assert_eq!(max_upscale_size(true), (2176, 2960));
+    }
 
-        let mut img1 = RgbImage::new(100, 100);
-        for p in img1.pixels_mut() {
-            *p = image::Rgb([255, 255, 255]);
-        }
-        let mut img2 = img1.clone();
+    #[test]
+    fn an_unbled_source_is_capped_at_that_outputs_cut_area() {
+        // 2176 * 744/816 and 2960 * 1038/1110, both exact. Bleed is generated
+        // after upscaling, which grows it back to the full size above.
+        assert_eq!(max_upscale_size(false), (1984, 2768));
+    }
 
-        apply_uniqueness_marker(&mut img1, 1);
-        apply_uniqueness_marker(&mut img2, 2);
+    #[test]
+    fn both_source_kinds_reach_the_same_card_resolution() {
+        // The point of the pair. A bled source passes through at its capped
+        // size; an unbled one has bleed added, and the two land together.
+        let bled = cap(1568 * 4, 2140 * 4, max_upscale_size(true));
+        assert_eq!(bled, (2169, 2960));
 
-        fn hash_img(img: &RgbImage) -> u64 {
-            let mut hasher = DefaultHasher::new();
-            img.as_raw().hash(&mut hasher);
-            hasher.finish()
-        }
+        let unbled = cap(744 * 4, 1038 * 4, max_upscale_size(false));
+        assert_eq!(unbled, (1984, 2768));
+        let generated = add_mpc_bleed_border(&source(unbled.0, unbled.1, 0, 0));
+        assert_eq!(generated.dimensions(), (2176, 2960));
 
-        assert_ne!(hash_img(&img1), hash_img(&img2));
+        // Same card, within a third of a percent either way.
+        let ratio = generated.width() as f32 / bled.0 as f32;
+        assert!(ratio > 0.99 && ratio < 1.01, "{ratio}");
+    }
+
+    #[test]
+    fn a_source_that_already_fits_is_left_alone() {
+        // The library's own sizes, which the upscaler reads rather than writes.
+        assert_eq!(cap(1568, 2140, max_upscale_size(true)), (1568, 2140));
+        assert_eq!(cap(1632, 2220, max_upscale_size(true)), (1632, 2220));
     }
 
     #[test]

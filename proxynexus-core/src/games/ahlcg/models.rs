@@ -23,8 +23,7 @@ pub struct AhdbPack {
 }
 
 /// A card from ArkhamDB's `/api/public/cards/{pack_code}` endpoint. Covers
-/// investigator, player, and encounter cards -- they all share this shape,
-/// just with different fields populated.
+/// investigator, player, and encounter cards.
 ///
 /// Player card example:
 /// ```json
@@ -39,103 +38,105 @@ pub struct AhdbPack {
 ///   "quantity": 1
 /// }
 /// ```
-///
-/// Encounter card example:
-/// ```json
-/// {
-///   "code": "01104",
-///   "name": "The Gathering",
-///   "pack_code": "core",
-///   "position": 104,
-///   "type_code": "scenario",
-///   "faction_code": "mythos",
-///   "quantity": 1
-/// }
-/// ```
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AhdbCard {
-    /// The card's unique code -- matches the `{card_id}` portion of the
-    /// image naming convention exactly, no normalization needed.
     pub code: String,
     pub name: String,
-    /// Matches the `{pack_id}` portion of the image naming convention.
     pub pack_code: String,
     pub position: i64,
-    /// e.g. "investigator", "asset", "event", "skill", "enemy", "treachery",
-    /// "act", "agenda", "location", "scenario", "story". Used by the
-    /// adapter's `back_type_for` to classify which generic card back
-    /// (player/encounter) a card needs -- see that function's doc comment
-    /// for why `faction_code` alone isn't reliable for this.
     pub type_code: String,
-    /// Player faction ("guardian", "seeker", "rogue", "mystic", "survivor",
-    /// "neutral") or "mythos" for encounter cards.
     pub faction_code: String,
     #[serde(default)]
     pub quantity: Option<i64>,
-    /// True for cards with a printed back side that's just the flip side of
-    /// this same card (most investigators, acts, and agendas) -- ArkhamDB
-    /// keeps both sides under this single `code`, with `imagesrc`/
-    /// `backimagesrc` pointing to the front/back art rather than issuing
-    /// the back its own card entry. That maps directly onto Proxy Nexus's
-    /// `{card_id}@{pack_id}~back` part-naming convention, so no
-    /// card-splitting is needed for these -- deliberately does NOT affect
-    /// `back_type`, which stays based on this card's own `type_code`
-    /// regardless (the back is still always the same player/encounter
-    /// identity as the front for this category).
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub double_sided: Option<bool>,
-    /// Set instead of (or, rarely, alongside) `double_sided` when this
-    /// card's back is a MECHANICALLY DIFFERENT card -- e.g. an ally that
-    /// flips into an enemy (Carl Sanford, "The Midwinter Gala") -- rather
-    /// than just the flip side of the same identity. Confirmed via a live
-    /// scan of all 113 ArkhamDB packs: 464 cards carry this, 52 of which
-    /// have a front/back that classify to a *different* back_type (player
-    /// vs encounter) -- e.g. Carl Sanford himself is `asset`/player up
-    /// front but his linked `71034b` is `enemy`/encounter. The linked card
-    /// never appears as its own top-level entry in any per-pack listing
-    /// (confirmed empirically), only nested here -- see `linked_card`.
-    #[serde(default)]
-    pub linked_to_code: Option<String>,
-    /// The full linked card's data, embedded inline by ArkhamDB's API
-    /// (present whenever `linked_to_code` is). Used only for its
-    /// `code`/`name`/`type_code` -- surfaced in the manifest as
-    /// `linked_card_code`/`linked_card_name`/`linked_card_back_type` so
-    /// generation output can show what the physical card's back actually
-    /// is, without changing this card's own `back_type`.
-    #[serde(default)]
-    pub linked_card: Option<Box<AhdbLinkedCard>>,
-    /// "weakness" or "basicweakness" when this card is a weakness --
-    /// absent for every other card, regardless of `type_code`. Weakness
-    /// cards physically print with the PLAYER card back even when their
-    /// `type_code` is "enemy" or "treachery" (e.g. Mob Goons, 08003): that
-    /// `type_code` still governs how the card *resolves* once drawn (an
-    /// "encounter cardtype" card per the Rules Reference -- not controlled
-    /// by any player, resolved like a card drawn from the encounter deck),
-    /// but the card itself was drawn from -- and gets shuffled back into --
-    /// the investigator's own deck, so it has to carry that deck's back.
-    /// Confirmed against a real physical scan and a community TTS mod's
-    /// card-back catalog (Mob Goons uses the identical BackURL and
-    /// "PlayerCard" tag as ordinary player cards, not the encounter back).
     #[serde(default)]
     pub subtype_code: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub xp: Option<i64>,
+    #[serde(default)]
+    pub subname: Option<String>,
+    #[serde(default)]
+    pub duplicated_by: Vec<String>,
 }
 
-/// The subset of a linked card's fields we actually need -- see
-/// `AhdbCard::linked_card`.
-#[derive(Debug, Clone, Deserialize)]
-pub struct AhdbLinkedCard {
-    pub code: String,
-    pub name: String,
-    pub type_code: String,
-}
-
-/// A decklist from ArkhamDB's `/api/public/decklist/{id}` endpoint. Mirrors
-/// the MarvelCDB/RingsDB shape -- card codes mapped to quantities. Does not
-/// include the investigator itself (that's a separate `investigator_code`
-/// field), matching how every other adapter's decklist parsing leaves the
-/// identity/investigator card for the user to add separately.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AhdbDecklist {
     pub slots: std::collections::HashMap<String, i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AhdbCard;
+
+    fn parse(json: &str) -> AhdbCard {
+        serde_json::from_str(json).expect("card should deserialize")
+    }
+
+    #[test]
+    fn a_card_carrying_no_hidden_flag_is_not_hidden() {
+        // Every ordinary card omits the field, so the default is what almost
+        // every record relies on.
+        let card = parse(
+            r#"{"code":"01001","name":"Roland Banks","pack_code":"core","position":1,
+                "type_code":"investigator","faction_code":"guardian"}"#,
+        );
+        assert!(!card.hidden);
+        assert_eq!(card.quantity, None);
+        assert_eq!(card.subtype_code, None);
+        assert_eq!(card.xp, None);
+        assert_eq!(card.subname, None);
+        assert!(card.duplicated_by.is_empty());
+    }
+
+    #[test]
+    fn an_upgrade_carries_its_level() {
+        // `01039` Deduction is level 0; `02150` is the level 2 of the same
+        // name, and only `xp` says so.
+        let base = parse(
+            r#"{"code":"01039","name":"Deduction","pack_code":"core","position":39,
+                "type_code":"skill","faction_code":"seeker","xp":0}"#,
+        );
+        assert_eq!(base.xp, Some(0));
+
+        let upgrade = parse(
+            r#"{"code":"02150","name":"Deduction","pack_code":"tece","position":150,
+                "type_code":"skill","faction_code":"seeker","xp":2}"#,
+        );
+        assert_eq!(upgrade.xp, Some(2));
+    }
+
+    #[test]
+    fn a_reprint_is_listed_on_the_card_it_reprints() {
+        // `60227` Seeking Answers (2) and `01685` are one card printed twice,
+        // with the text reworded between the two.
+        let card = parse(
+            r#"{"code":"60227","name":"Seeking Answers","pack_code":"har","position":27,
+                "type_code":"event","faction_code":"seeker","xp":2,
+                "duplicated_by":["01685"]}"#,
+        );
+        assert_eq!(card.duplicated_by, ["01685"]);
+    }
+
+    #[test]
+    fn a_subtitle_is_read_where_the_card_has_one() {
+        // `03298` Abbey Tower, one of two locations of that name in the pack.
+        let card = parse(
+            r#"{"code":"03298","name":"Abbey Tower","subname":"The Path is Open",
+                "pack_code":"bsr","position":298,"type_code":"location",
+                "faction_code":"mythos"}"#,
+        );
+        assert_eq!(card.subname.as_deref(), Some("The Path is Open"));
+    }
+
+    #[test]
+    fn the_half_arkhamdb_hides_is_read_as_hidden() {
+        // `03325` Shores of Hali, the face behind `03325b`.
+        let card = parse(
+            r#"{"code":"03325","name":"Shores of Hali","pack_code":"dca","position":325,
+                "type_code":"location","faction_code":"mythos","hidden":true}"#,
+        );
+        assert!(card.hidden);
+    }
 }

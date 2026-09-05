@@ -1,5 +1,6 @@
 use anyhow::{Context, anyhow};
 use clap::{Parser, Subcommand};
+use proxynexus_core::card_backs;
 use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
 use proxynexus_core::catalog::CatalogManager;
 use proxynexus_core::collection_builder::build_collection;
@@ -8,7 +9,7 @@ use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::image_provider::LocalImageProvider;
 use proxynexus_core::manifest::{build_manifest, manifest_to_csv, manifest_to_json};
 use proxynexus_core::models::Printing;
-use proxynexus_core::mpc::generate_mpc_zip;
+use proxynexus_core::mpc::{Cardstock, generate_mpc_zip};
 use proxynexus_core::pdf::{
     CutLines, DEFAULT_CUT_LINE_THICKNESS, MAX_CUT_LINE_THICKNESS, MIN_CUT_LINE_THICKNESS, PageSize,
     PdfOptions, generate_pdf,
@@ -90,6 +91,9 @@ enum CollectionAction {
 
         #[arg(short, long, default_value = "1.0.0")]
         version: String,
+
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        restrict_back_labels: Vec<String>,
     },
     Add {
         path: PathBuf,
@@ -170,13 +174,27 @@ enum GenerateType {
         #[arg(long)]
         upscale: bool,
 
-        /// Cardstock for the companion mpc-autofill order XML.
-        #[arg(long, default_value = "s33")]
-        stock: String,
+        #[arg(
+            long = "mpc-autofill",
+            help = "Target the mpc-autofill desktop tool: add an order.xml and write each image \
+                    once rather than once per copy."
+        )]
+        autofill: bool,
 
-        /// Foil finish for the companion mpc-autofill order XML.
+        #[arg(
+            long,
+            help = "Which set of back images to use, for cards with no back of their own."
+        )]
+        back_label: Option<String>,
+
+        #[arg(long, default_value = "S30", help = "S27, S30, S33, M31, or P10")]
+        cardstock: String,
+
+        /// Fork-only: also bundle manifest.csv/manifest.json into the zip --
+        /// one row per printing with its back_group (and, for a card whose
+        /// back is a mechanically different card, that back's identity).
         #[arg(long)]
-        foil: bool,
+        manifest: bool,
     },
     Bleed {
         #[arg(short, long)]
@@ -272,10 +290,18 @@ async fn handle_collection_action(
             images,
             language,
             version,
+            restrict_back_labels,
         } => {
             println!("Writing pnx file...");
-            let report = build_collection(game.to_string(), &output, &images, language, version)
-                .context("Failed to build collection")?;
+            let report = build_collection(
+                game.to_string(),
+                &output,
+                &images,
+                language,
+                version,
+                restrict_back_labels,
+            )
+            .context("Failed to build collection")?;
             println!("Added {} printings", report.printings_added);
             println!("Collection created: {:?}", output);
             if verbose {
@@ -506,8 +532,9 @@ async fn handle_generate(
             let source = determine_input_source(cardlist, set_name, decklist_url);
 
             let printings = get_printings_from_source(db, game, source).await?;
+            let labels = card_backs::allowed_labels(db, game, &printings).await?;
 
-            let back_label = resolve_back_label(back_label.as_deref(), game, double_sided)?;
+            let back_label = resolve_back_label(back_label.as_deref(), &labels, double_sided)?;
 
             let pdf_options = PdfOptions {
                 page_size: page_size_enum,
@@ -550,68 +577,42 @@ async fn handle_generate(
             decklist_url,
             output_path,
             upscale,
-            stock,
-            foil,
+            autofill,
+            back_label,
+            cardstock,
+            manifest,
         } => {
-            let stock_enum = parse_stock(&stock).context("Invalid cardstock option")?;
             let source = determine_input_source(cardlist, set_name, decklist_url);
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
+            let labels = card_backs::allowed_labels(db, game, &printings).await?;
+            let back_label = resolve_back_label(back_label.as_deref(), &labels, autofill)?;
 
-            // Manifest CSV/JSON and the mpc-autofill order XML get bundled
-            // into the same ZIP as the card images below instead of being
-            // written as separate files alongside it -- so build the
-            // manifest content here rather than via write_manifest_files
-            // (which writes straight to disk, used by the PDF path above).
-            let manifest_entries = build_manifest(&printings);
-            let manifest_csv = manifest_to_csv(&manifest_entries);
-            let manifest_json =
-                manifest_to_json(&manifest_entries).context("Failed to serialize manifest JSON")?;
-
-            let card_backs = proxynexus_core::card_backs::fetch_card_backs(game)
+            let card_backs = card_backs::fetch_card_backs(game, &labels)
                 .await
                 .unwrap_or_default();
 
-            let mpc_output = generate_mpc_zip(
-                game,
+            let mpc_bytes = generate_mpc_zip(
                 printings,
                 image_provider,
-                proxynexus_core::mpc::MpcOptions { upscale },
+                proxynexus_core::mpc::MpcOptions {
+                    upscale,
+                    autofill,
+                    back_label,
+                    cardstock: parse_cardstock(&cardstock)?,
+                    include_manifest: manifest,
+                },
                 card_backs,
                 None,
             )
             .await
             .context("Failed to generate MPC ZIP")?;
 
-            let autofill_xml = proxynexus_core::mpc::generate_mpc_autofill_xml(
-                &mpc_output.autofill_slots,
-                proxynexus_core::mpc::MpcAutofillOptions {
-                    stock: stock_enum,
-                    foil,
-                },
-            );
-
-            let combined_zip = proxynexus_core::mpc::append_files_to_zip(
-                mpc_output.zip_bytes,
-                &[
-                    (
-                        "proxynexus_export_mpc_autofill.xml",
-                        autofill_xml.as_bytes(),
-                    ),
-                    ("proxynexus_export_manifest.csv", manifest_csv.as_bytes()),
-                    ("proxynexus_export_manifest.json", manifest_json.as_bytes()),
-                ],
-            )
-            .context("Failed to bundle manifest/xml into MPC zip")?;
-
-            std::fs::write(&output_path, combined_zip)
+            std::fs::write(&output_path, mpc_bytes)
                 .with_context(|| format!("Failed to write ZIP to {:?}", output_path))?;
             info!("runtime: {:?}", start.elapsed());
-            println!(
-                "MPC ZIP created successfully (includes manifest CSV/JSON and mpc-autofill XML): {:?}",
-                output_path
-            );
+            println!("MPC ZIP created successfully: {:?}", output_path);
             Ok(())
         }
         GenerateType::Bleed { input_dir } => {
@@ -700,6 +701,20 @@ fn parse_page_size(size: &str) -> anyhow::Result<PageSize> {
     }
 }
 
+fn parse_cardstock(stock: &str) -> anyhow::Result<Cardstock> {
+    match stock.to_uppercase().as_str() {
+        "S27" => Ok(Cardstock::S27),
+        "S30" => Ok(Cardstock::S30),
+        "S33" => Ok(Cardstock::S33),
+        "M31" => Ok(Cardstock::M31),
+        "P10" => Ok(Cardstock::P10),
+        _ => Err(anyhow!(
+            "Unsupported cardstock: '{}'. Options are 'S27', 'S30', 'S33', 'M31', or 'P10'",
+            stock
+        )),
+    }
+}
+
 fn parse_cut_lines(cut_lines: Option<&str>) -> anyhow::Result<CutLines> {
     match cut_lines {
         Some("none") => Ok(CutLines::None),
@@ -708,21 +723,6 @@ fn parse_cut_lines(cut_lines: Option<&str>) -> anyhow::Result<CutLines> {
         Some(unsupported) => Err(anyhow!(
             "Unsupported cut lines option: '{}'. Options are 'none', 'margins', or 'fullpage'",
             unsupported
-        )),
-    }
-}
-
-fn parse_stock(stock: &str) -> anyhow::Result<proxynexus_core::mpc::Cardstock> {
-    use proxynexus_core::mpc::Cardstock;
-    match stock {
-        "s27" => Ok(Cardstock::S27),
-        "s30" => Ok(Cardstock::S30),
-        "s33" => Ok(Cardstock::S33),
-        "m31" => Ok(Cardstock::M31),
-        "p10" => Ok(Cardstock::P10),
-        _ => Err(anyhow!(
-            "Unsupported cardstock: '{}'. Options are 's27', 's30', 's33', 'm31', 'p10'",
-            stock
         )),
     }
 }
@@ -742,11 +742,9 @@ fn parse_print_layout(layout: &str) -> anyhow::Result<proxynexus_core::pdf::Prin
 
 fn resolve_back_label(
     back_label: Option<&str>,
-    game_id: &str,
+    labels: &[&'static str],
     double_sided: bool,
 ) -> anyhow::Result<Option<&'static str>> {
-    let labels = proxynexus_core::card_backs::back_labels(game_id);
-
     if labels.is_empty() {
         if back_label.is_some() {
             return Err(anyhow!(
@@ -762,7 +760,7 @@ fn resolve_back_label(
     }
 
     let Some(back_label) = back_label else {
-        return Ok(None);
+        return Ok(card_backs::default_label(labels));
     };
 
     labels

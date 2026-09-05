@@ -3,11 +3,13 @@ use crate::error::Result;
 use crate::games::GameAdapterInfo;
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::ahlcg::adapter::AhlcgAdapter;
+use crate::games::coclcg::adapter::CocAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use crate::games::netrunner_reboot::adapter::NetrunnerRebootAdapter;
+use crate::games::whconquest::adapter::WhcAdapter;
 use crate::games::whinvasion::adapter::WhiAdapter;
 use async_trait::async_trait;
 use gluesql::FromGlueRow;
@@ -31,10 +33,13 @@ pub struct Card {
     pub title_normalized: String,
     pub back_group: Option<String>,
     /// Set when this card's physical back is a mechanically different card
-    /// (e.g. Arkham Horror's Carl Sanford, or a Marvel Champions hero's
-    /// alter-ego) rather than a generic back or the flip side of the same
-    /// identity. Fork-only metadata, consumed by `manifest.rs`; upstream's
-    /// schema has no equivalent. `None` for the vast majority of cards.
+    /// (e.g. a Marvel Champions hero's alter-ego) rather than a generic back
+    /// or the flip side of the same identity. Fork-only metadata, consumed
+    /// by `manifest.rs`; upstream's schema has no equivalent -- the
+    /// upstreamed `ahlcg` adapter (unlike this fork's own copy) doesn't
+    /// populate this, since its `~back` filename convention resolves those
+    /// cards' back images independently of this field. `None` for the vast
+    /// majority of cards.
     pub linked_card_code: Option<String>,
     pub linked_card_name: Option<String>,
     pub linked_card_back_group: Option<String>,
@@ -77,6 +82,8 @@ impl<'a> CatalogManager<'a> {
             Box::new(MarvelChampionsAdapter::new()),
             Box::new(AhlcgAdapter::new()),
             Box::new(WhiAdapter::new()),
+            Box::new(WhcAdapter::new()),
+            Box::new(CocAdapter::new()),
         ];
 
         Self { db, adapters }

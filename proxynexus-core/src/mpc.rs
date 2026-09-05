@@ -1,26 +1,19 @@
-use crate::card_backs::{self, CardBack};
-use crate::error::Result;
-use crate::file_naming::{back_index, back_label};
+use crate::card_backs::CardBack;
+use crate::error::{ProxyNexusError, Result};
 use crate::image_provider::ImageProvider;
-use crate::models::{BleedPreference, Printing, SourceImage};
+use crate::manifest::{build_manifest, manifest_to_csv, manifest_to_json};
+use crate::models::{BleedPreference, Printing, SourceImage, expand_to_cards};
 use crate::print_prep;
 use image::ImageFormat;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Seek, Write};
 use tracing::info;
 use web_time::Instant;
 use zip::ZipWriter;
-use zip::read::ZipArchive;
 use zip::write::SimpleFileOptions;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-pub struct MpcOptions {
-    pub upscale: bool,
-}
-
-/// Which MakePlayingCards cardstock an autofill order should print on.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub enum Cardstock {
     S27,
     #[default]
@@ -31,7 +24,15 @@ pub enum Cardstock {
 }
 
 impl Cardstock {
-    pub fn mpc_autofill_str(&self) -> &'static str {
+    pub const ALL: [Cardstock; 5] = [
+        Cardstock::S27,
+        Cardstock::S30,
+        Cardstock::S33,
+        Cardstock::M31,
+        Cardstock::P10,
+    ];
+
+    pub fn as_str(self) -> &'static str {
         match self {
             Cardstock::S27 => "(S27) Smooth",
             Cardstock::S30 => "(S30) Standard Smooth",
@@ -42,70 +43,98 @@ impl Cardstock {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct MpcAutofillOptions {
-    pub stock: Cardstock,
-    pub foil: bool,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct MpcOptions {
+    pub upscale: bool,
+    pub autofill: bool,
+    pub back_label: Option<&'static str>,
+    pub cardstock: Cardstock,
+    /// Fork-only: also bundle `manifest.csv`/`manifest.json` into the zip --
+    /// one row per printing recording its `back_group` (and, for a card
+    /// whose physical back is a mechanically different card, the
+    /// `linked_card_*` identity of that back) -- see `manifest.rs`.
+    /// Independent of `autofill`/`back_label`/`cardstock`, which only
+    /// control the mpc-autofill desktop tool's `order.xml`.
+    pub include_manifest: bool,
 }
 
-/// One physical card in an mpc-autofill order: the zip-relative filename of
-/// its front image, and its back's if it has one (either a real, card-
-/// specific back, or the generic back for its back_group).
-#[derive(Clone, Debug, PartialEq)]
-pub struct AutofillSlot {
-    pub front_filename: String,
-    pub back_filename: Option<String>,
-}
-
-pub struct MpcZipOutput {
-    pub zip_bytes: Vec<u8>,
-    pub autofill_slots: Vec<AutofillSlot>,
+#[derive(Default)]
+struct OrderPlan {
+    fronts: Vec<(String, usize)>,
+    backs: Vec<(String, usize)>,
+    shared: Vec<(&'static str, usize)>,
 }
 
 pub async fn generate_mpc_zip(
-    game_id: &str,
     printings: Vec<Printing>,
     image_provider: &impl ImageProvider,
     options: MpcOptions,
     card_backs: Vec<(&'static CardBack, Vec<u8>)>,
     progress: Option<Box<dyn Fn(f32) + Send + Sync>>,
-) -> Result<MpcZipOutput> {
-    let total_images: usize = printings.iter().map(|p| 1 + p.backs.len()).sum();
+) -> Result<Vec<u8>> {
+    // A printing with several backs is several cards sharing one front, so the
+    // card count is not the printing count. `expand_to_cards` settles both.
+    let (quantity, total_images) = {
+        let cards = expand_to_cards(&printings);
+        let images = cards
+            .iter()
+            .map(|(_, card)| 1 + usize::from(card.back.is_some()))
+            .sum();
+        (cards.len(), images)
+    };
     let mut processed_images = 0;
 
-    // A card whose adapter can't classify it (`back_group: None`) has no
-    // generic back to look up at all -- kept as its own `None` group here
-    // rather than folded into a sentinel string, so the lookup below is
-    // skipped outright instead of depending on no real game ever shipping
-    // a back_group that happens to collide with a made-up placeholder.
-    let mut back_groups: HashMap<Option<String>, Vec<Printing>> = HashMap::new();
+    // Built from a borrow before `printings` is consumed below.
+    let manifest = options.include_manifest.then(|| build_manifest(&printings));
+
+    let mut back_groups: BTreeMap<String, Vec<Printing>> = BTreeMap::new();
     for printing in printings {
-        back_groups
-            .entry(printing.back_group.clone())
-            .or_default()
-            .push(printing);
+        // `None` (the adapter couldn't classify this card) buckets under a
+        // sentinel that never collides with a real registered back_group --
+        // see back_slot()'s identical convention in pdf.rs.
+        let key = printing
+            .back_group
+            .clone()
+            .unwrap_or_else(|| "unclassified".to_string());
+        back_groups.entry(key).or_default().push(printing);
     }
 
     let mut zip_buffer = Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(&mut zip_buffer);
-    let mut autofill_slots = Vec::new();
 
     let single_group = back_groups.len() == 1;
+    let mut plan = OrderPlan::default();
+    let mut slot_offset = 0;
 
     for (group_name, group_printings) in back_groups {
-        let group_label = group_name.as_deref().unwrap_or("unclassified");
         let folder_name = if single_group {
             "card-images".to_string()
         } else {
-            format!("{}-images", group_label)
+            format!("{}-images", group_name)
         };
 
-        let generic_back = group_name
-            .as_deref()
-            .and_then(|group| card_backs::card_back(game_id, group, None))
-            .map(|cb| cb.file.to_string());
+        let shared_back = options.back_label.and_then(|label| {
+            card_backs
+                .iter()
+                .map(|(back, _)| *back)
+                .find(|back| back.back_group == group_name && back.label == label)
+        });
+        let group_size = {
+            let cards = expand_to_cards(&group_printings);
+            if let Some(back) = shared_back {
+                for (position, (_, card)) in cards.iter().enumerate() {
+                    if card.back.is_none() {
+                        plan.shared.push((back.file, slot_offset + position));
+                    }
+                }
+            }
+            cards.len()
+        };
 
-        let slots = process_back_group(
+        let group_start = slot_offset;
+        slot_offset += group_size;
+
+        process_back_group(
             group_printings,
             image_provider,
             options,
@@ -114,18 +143,14 @@ pub async fn generate_mpc_zip(
             &progress,
             &mut processed_images,
             total_images,
+            group_start,
+            &mut plan,
         )
         .await?;
-
-        autofill_slots.extend(slots.into_iter().map(|mut slot| {
-            if slot.back_filename.is_none() {
-                slot.back_filename = generic_back.clone();
-            }
-            slot
-        }));
     }
 
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let file_options =
+        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     for (back, bytes) in card_backs {
         let prepared = if back.has_bleed {
@@ -136,80 +161,33 @@ pub async fn generate_mpc_zip(
             print_prep::encode_image(print_prep::add_mpc_bleed_border(&img), format)?
         };
 
-        zip.start_file(back.file, options)?;
+        zip.start_file(back.file, file_options)?;
         zip.write_all(&prepared)?;
     }
 
-    zip.finish()?;
-    Ok(MpcZipOutput {
-        zip_bytes: zip_buffer.into_inner(),
-        autofill_slots,
-    })
-}
-
-/// Merges extra named entries into an already-built zip without
-/// recompressing its existing contents.
-pub fn append_files_to_zip(zip_bytes: Vec<u8>, extra_files: &[(&str, &[u8])]) -> Result<Vec<u8>> {
-    let archive = ZipArchive::new(Cursor::new(zip_bytes))?;
-    let mut buffer = Cursor::new(Vec::new());
-    let mut writer = ZipWriter::new(&mut buffer);
-    writer.merge_archive(archive)?;
-
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    for (name, contents) in extra_files {
-        writer.start_file(*name, options)?;
-        writer.write_all(contents)?;
-    }
-    writer.finish()?;
-    Ok(buffer.into_inner())
-}
-
-pub fn generate_mpc_autofill_xml(slots: &[AutofillSlot], options: MpcAutofillOptions) -> String {
-    let mut xml = String::new();
-    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<order>\n  <details>\n");
-    xml.push_str(&format!("    <quantity>{}</quantity>\n", slots.len()));
-    xml.push_str(&format!(
-        "    <stock>{}</stock>\n",
-        xml_escape(options.stock.mpc_autofill_str())
-    ));
-    xml.push_str(&format!("    <foil>{}</foil>\n", options.foil));
-    xml.push_str("  </details>\n  <fronts>\n");
-    for (slot, s) in slots.iter().enumerate() {
-        xml.push_str(&autofill_card_element(&s.front_filename, slot));
-    }
-    xml.push_str("  </fronts>\n  <backs>\n");
-    for (slot, s) in slots.iter().enumerate() {
-        if let Some(back) = &s.back_filename {
-            xml.push_str(&autofill_card_element(back, slot));
+    if options.autofill {
+        if plan.backs.is_empty() && plan.shared.is_empty() {
+            return Err(ProxyNexusError::Internal(
+                "No card has a back image, so order.xml cannot be written. Every \
+                 MakePlayingCards card needs a back."
+                    .to_string(),
+            ));
         }
+
+        zip.start_file("order.xml", file_options)?;
+        zip.write_all(build_order_xml(quantity, options.cardstock, &plan).as_bytes())?;
     }
-    xml.push_str("  </backs>\n");
-    let cardback = slots
-        .iter()
-        .find_map(|s| s.back_filename.as_deref())
-        .unwrap_or("");
-    xml.push_str(&format!(
-        "  <cardback>{}</cardback>\n",
-        xml_escape(cardback)
-    ));
-    xml.push_str("</order>\n");
-    xml
-}
 
-fn autofill_card_element(filename: &str, slot: usize) -> String {
-    let name = filename.rsplit('/').next().unwrap_or(filename);
-    format!(
-        "    <card><id>{path}</id><sourceType>Local File</sourceType><slots>{slot}</slots><name>{name}</name></card>\n",
-        path = xml_escape(filename),
-        name = xml_escape(name),
-    )
-}
+    if let Some(entries) = manifest {
+        zip.start_file("manifest.csv", file_options)?;
+        zip.write_all(manifest_to_csv(&entries).as_bytes())?;
 
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+        zip.start_file("manifest.json", file_options)?;
+        zip.write_all(manifest_to_json(&entries)?.as_bytes())?;
+    }
+
+    zip.finish()?;
+    Ok(zip_buffer.into_inner())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -222,70 +200,73 @@ async fn process_back_group<W: Write + Seek>(
     progress: &Option<Box<dyn Fn(f32) + Send + Sync>>,
     processed_images: &mut usize,
     total_images: usize,
-) -> Result<Vec<AutofillSlot>> {
+    slot_offset: usize,
+    plan: &mut OrderPlan,
+) -> Result<()> {
     let mut copy_counters: HashMap<(String, String, Option<String>), u32> = HashMap::new();
-    let mut uniqueness_counter: u32 = 0;
-
-    #[derive(Default)]
-    struct SlotBuilder {
-        front: Option<String>,
-        backs: Vec<(u32, String)>,
-    }
-    let mut slot_builders: HashMap<(String, String, Option<String>, u32), SlotBuilder> =
-        HashMap::new();
 
     struct ImageRequest {
         printing: Printing,
         side_name: String,
         source: SourceImage,
         copy_num: u32,
+        slot: usize,
     }
 
     let mut requests: Vec<ImageRequest> = Vec::new();
 
-    for printing in printings {
+    for (position, (_, card)) in expand_to_cards(&printings).iter().enumerate() {
+        let slot = slot_offset + position;
+        let printing = card.printing;
         let key = (
             printing.collection.clone(),
             printing.card_id.clone(),
             printing.variant.clone(),
         );
-        let copy_num = copy_counters
+        let copy_num = *copy_counters
             .entry(key)
             .and_modify(|n| *n += 1)
             .or_insert(1);
 
-        let backs = printing.backs.clone();
-
-        if let Some(source) = printing.front.image(BleedPreference::Bleed) {
+        if let Some(source) = card.front.image(BleedPreference::Bleed) {
             requests.push(ImageRequest {
                 printing: printing.clone(),
                 side_name: "front".to_string(),
                 source,
-                copy_num: *copy_num,
+                copy_num,
+                slot,
             });
         }
 
-        for (offset, back) in backs.iter().enumerate() {
-            if let Some(source) = back.image(BleedPreference::Bleed) {
-                requests.push(ImageRequest {
-                    printing: printing.clone(),
-                    side_name: back_label(offset as u32 + 1),
-                    source,
-                    copy_num: *copy_num,
-                });
-            }
+        if let Some(source) = card
+            .back
+            .and_then(|back| back.image(BleedPreference::Bleed))
+        {
+            requests.push(ImageRequest {
+                printing: printing.clone(),
+                side_name: "back".to_string(),
+                source,
+                copy_num,
+                slot,
+            });
         }
     }
 
     requests.sort_by(|a, b| a.source.key.cmp(&b.source.key));
 
+    enum PreparedImage {
+        Source(Vec<u8>),
+        Pixels(image::RgbImage),
+    }
+
     struct CachedImage {
         key: String,
-        image: image::RgbImage,
+        prepared: PreparedImage,
         format: ImageFormat,
     }
 
     let mut current_cache: Option<CachedImage> = None;
+    let mut current_file: Option<String> = None;
 
     for req in requests {
         let printing = req.printing;
@@ -293,38 +274,45 @@ async fn process_back_group<W: Write + Seek>(
         let current_image_key = req.source.key;
         let copy_num = req.copy_num;
 
-        uniqueness_counter += 1;
         let start = Instant::now();
 
         if current_cache
             .as_ref()
             .is_none_or(|c| c.key != current_image_key)
         {
-            let mut image_data = image_provider.get_image_bytes(&current_image_key).await?;
-
-            if options.upscale {
-                image_data = crate::upscale_image(&image_data).await?
-            }
-
+            let image_data = image_provider.get_image_bytes(&current_image_key).await?;
             let image_format = image::guess_format(&image_data).unwrap_or(ImageFormat::Jpeg);
-            let img = image::load_from_memory(&image_data)?;
-            let bleed_image = if req.source.has_bleed {
-                img.to_rgb8()
+
+            // Image doesn't require any modifications, so use the bytes rather than decode and re-encode them.
+            let prepared = if req.source.has_bleed
+                && !options.upscale
+                && matches!(image_format, ImageFormat::Jpeg | ImageFormat::Png)
+            {
+                PreparedImage::Source(image_data)
             } else {
-                print_prep::add_mpc_bleed_border(&img)
+                let img = if options.upscale {
+                    let max = print_prep::max_upscale_size(req.source.has_bleed);
+                    image::DynamicImage::ImageRgb8(crate::upscale_image(&image_data, max).await?)
+                } else {
+                    image::load_from_memory(&image_data)?
+                };
+
+                PreparedImage::Pixels(if req.source.has_bleed {
+                    img.to_rgb8()
+                } else {
+                    print_prep::add_mpc_bleed_border(&img)
+                })
             };
 
             current_cache = Some(CachedImage {
                 key: current_image_key.clone(),
-                image: bleed_image,
+                prepared,
                 format: image_format,
             });
+            current_file = None;
         }
 
         let cached = current_cache.as_ref().unwrap();
-        let mut final_image = cached.image.clone();
-        print_prep::apply_uniqueness_marker(&mut final_image, uniqueness_counter);
-        let bordered_bytes = print_prep::encode_image(final_image, cached.format)?;
 
         let ext = if cached.format == ImageFormat::Png {
             "png"
@@ -352,23 +340,28 @@ async fn process_back_group<W: Write + Seek>(
             )
         };
 
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let path = match &current_file {
+            Some(written) if options.autofill => written.clone(),
+            _ => {
+                let file_options =
+                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-        zip.start_file(&filename, options)?;
-        zip.write_all(&bordered_bytes)?;
+                zip.start_file(&filename, file_options)?;
+                match &cached.prepared {
+                    PreparedImage::Source(bytes) => zip.write_all(bytes)?,
+                    PreparedImage::Pixels(img) => {
+                        zip.write_all(&print_prep::encode_image(img.clone(), cached.format)?)?
+                    }
+                }
+                current_file = Some(filename.clone());
+                filename
+            }
+        };
 
-        let slot_key = (
-            printing.collection.clone(),
-            printing.card_id.clone(),
-            printing.variant.clone(),
-            copy_num,
-        );
-        let builder = slot_builders.entry(slot_key).or_default();
         if side_name == "front" {
-            builder.front = Some(filename.clone());
-        } else if let Some(index) = back_index(&side_name) {
-            builder.backs.push((index, filename.clone()));
+            plan.fronts.push((path, req.slot));
+        } else {
+            plan.backs.push((path, req.slot));
         }
 
         *processed_images += 1;
@@ -390,66 +383,220 @@ async fn process_back_group<W: Write + Seek>(
         );
     }
 
-    let mut slots: Vec<AutofillSlot> = Vec::new();
-    for builder in slot_builders.into_values() {
-        let Some(front) = builder.front else {
-            continue;
-        };
-        if builder.backs.is_empty() {
-            slots.push(AutofillSlot {
-                front_filename: front,
-                back_filename: None,
-            });
-        } else {
-            let mut backs = builder.backs;
-            backs.sort_by_key(|(index, _)| *index);
-            for (_, back_filename) in backs {
-                slots.push(AutofillSlot {
-                    front_filename: front.clone(),
-                    back_filename: Some(back_filename),
-                });
-            }
-        }
+    Ok(())
+}
+
+/// Builds the `order.xml` the mpc-autofill desktop tool reads. Paths are
+/// relative to the directory the zip is extracted into.
+fn build_order_xml(quantity: usize, cardstock: Cardstock, plan: &OrderPlan) -> String {
+    let mut shared: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (file, slot) in &plan.shared {
+        shared.entry(file).or_default().push(*slot);
     }
 
-    Ok(slots)
+    let common = shared
+        .iter()
+        .max_by_key(|(_, slots)| slots.len())
+        .map(|(file, _)| *file);
+
+    let mut xml = String::from("<order>\n  <details>\n");
+    xml.push_str(&format!("    <quantity>{}</quantity>\n", quantity));
+    xml.push_str(&format!(
+        "    <stock>{}</stock>\n",
+        escape(cardstock.as_str())
+    ));
+    xml.push_str("    <foil>false</foil>\n");
+    xml.push_str("  </details>\n");
+
+    push_face(&mut xml, "fronts", |out| {
+        for (path, slot) in &plan.fronts {
+            push_card(out, path, &[*slot]);
+        }
+    });
+
+    push_face(&mut xml, "backs", |out| {
+        for (path, slot) in &plan.backs {
+            push_card(out, path, &[*slot]);
+        }
+        for (file, slots) in &shared {
+            if Some(*file) != common {
+                push_card(out, file, slots);
+            }
+        }
+    });
+
+    xml.push_str("  <cardback>");
+    if let Some(file) = common {
+        xml.push_str(&escape(&format!("./{}", file)));
+    }
+    xml.push_str("</cardback>\n</order>\n");
+    xml
+}
+
+fn push_face(xml: &mut String, tag: &str, body: impl FnOnce(&mut String)) {
+    let mut inner = String::new();
+    body(&mut inner);
+    if !inner.is_empty() {
+        xml.push_str(&format!("  <{}>\n{}  </{}>\n", tag, inner, tag));
+    }
+}
+
+fn push_card(xml: &mut String, path: &str, slots: &[usize]) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let slots = slots
+        .iter()
+        .map(|slot| slot.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    xml.push_str("    <card>\n");
+    xml.push_str(&format!(
+        "      <id>{}</id>\n",
+        escape(&format!("./{}", path))
+    ));
+    xml.push_str("      <sourceType>Local File</sourceType>\n");
+    xml.push_str(&format!("      <slots>{}</slots>\n", slots));
+    xml.push_str(&format!("      <name>{}</name>\n", escape(name)));
+    xml.push_str("    </card>\n");
+}
+
+fn escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::CardSide;
 
-    struct MockImageProvider;
+    fn xml(quantity: usize, plan: &OrderPlan) -> String {
+        build_order_xml(quantity, Cardstock::default(), plan)
+    }
 
-    impl ImageProvider for MockImageProvider {
+    /// The autofill tool matches these against its own list and rejects anything
+    /// else, so a typo here only shows up outside this repo.
+    #[test]
+    fn every_cardstock_is_spelled_the_way_the_autofill_tool_expects() {
+        let expected = [
+            (Cardstock::S27, "(S27) Smooth"),
+            (Cardstock::S30, "(S30) Standard Smooth"),
+            (Cardstock::S33, "(S33) Superior Smooth"),
+            (Cardstock::M31, "(M31) Linen"),
+            (Cardstock::P10, "(P10) Plastic"),
+        ];
+        for (stock, spelling) in expected {
+            assert_eq!(stock.as_str(), spelling, "{:?}", stock);
+        }
+        assert_eq!(MpcOptions::default().cardstock, Cardstock::S30);
+        assert_eq!(
+            Cardstock::ALL.len(),
+            expected.len(),
+            "a stock is missing from ALL"
+        );
+        assert!(Cardstock::ALL.contains(&MpcOptions::default().cardstock));
+    }
+
+    #[test]
+    fn each_planned_file_becomes_a_card_naming_its_slot() {
+        let plan = OrderPlan {
+            fronts: vec![
+                ("card-images/hedge_fund-official-sg-1.jpg".into(), 0),
+                ("card-images/hedge_fund-official-sg-2.jpg".into(), 1),
+            ],
+            ..OrderPlan::default()
+        };
+        let out = xml(2, &plan);
+
+        assert!(out.contains("<quantity>2</quantity>"));
+        assert!(out.contains("<id>./card-images/hedge_fund-official-sg-1.jpg</id>"));
+        assert!(out.contains("<slots>0</slots>"));
+        assert!(out.contains("<slots>1</slots>"));
+        assert!(out.contains("<sourceType>Local File</sourceType>"));
+    }
+
+    #[test]
+    fn the_shared_back_covering_the_most_slots_becomes_the_common_cardback() {
+        let plan = OrderPlan {
+            shared: vec![
+                ("corp-back.png", 0),
+                ("corp-back.png", 1),
+                ("corp-back.png", 2),
+                ("runner-back.png", 3),
+            ],
+            ..OrderPlan::default()
+        };
+        let out = xml(4, &plan);
+
+        assert!(out.contains("<cardback>./corp-back.png</cardback>"));
+        // The common back is left out of <backs> so the tool fills it into every
+        // slot no other back claims, exactly as the frontend's own XML does.
+        assert!(!out.contains("./corp-back.png</id>"));
+        assert!(out.contains("<id>./runner-back.png</id>"));
+        assert!(out.contains("<slots>3</slots>"));
+    }
+
+    #[test]
+    fn a_cards_own_back_is_listed_against_its_slot_and_leaves_the_cardback_empty() {
+        let plan = OrderPlan {
+            fronts: vec![("card-images/a-official-x-1.jpg".into(), 0)],
+            backs: vec![("card-images/a-official-x-1-back.jpg".into(), 0)],
+            ..OrderPlan::default()
+        };
+        let out = xml(1, &plan);
+
+        assert!(out.contains("<backs>"));
+        assert!(out.contains("<id>./card-images/a-official-x-1-back.jpg</id>"));
+        // Nothing falls back on a shared back, so there is no common one to name.
+        assert!(out.contains("<cardback></cardback>"));
+        assert!(out.contains("<foil>false</foil>"));
+    }
+
+    #[test]
+    fn markup_characters_in_a_path_are_escaped() {
+        let plan = OrderPlan {
+            fronts: vec![("card-images/a&b-official-x-1.jpg".into(), 0)],
+            ..OrderPlan::default()
+        };
+        let out = xml(1, &plan);
+
+        assert!(out.contains("<id>./card-images/a&amp;b-official-x-1.jpg</id>"));
+        assert!(!out.contains("a&b-official"));
+    }
+
+    struct FakeImages;
+
+    impl ImageProvider for FakeImages {
         async fn get_image_bytes(&self, _key: &str) -> Result<Vec<u8>> {
-            let img = image::RgbImage::from_pixel(1, 1, image::Rgb([255, 255, 255]));
-            let mut bytes = Vec::new();
-            image::DynamicImage::ImageRgb8(img)
-                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                .unwrap();
-            Ok(bytes)
+            let img = image::RgbImage::from_fn(744, 1038, |x, y| {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 256) as u8])
+            });
+            print_prep::encode_image(img, ImageFormat::Jpeg)
         }
     }
 
-    fn side(key: &str) -> CardSide {
-        CardSide {
+    fn side(key: &str) -> crate::models::CardSide {
+        crate::models::CardSide {
             image_key: Some(key.to_string()),
             bleed_image_key: None,
         }
     }
 
-    fn printing(card_id: &str, backs: Vec<CardSide>) -> Printing {
+    fn a_printing(with_back: bool) -> Printing {
+        a_printing_with_backs(if with_back { &["back.jpg"] } else { &[] })
+    }
+
+    fn a_printing_with_backs(backs: &[&str]) -> Printing {
         Printing {
-            card_id: card_id.to_string(),
-            card_title: card_id.to_string(),
+            card_id: "hedge_fund".into(),
+            card_title: "Hedge Fund".into(),
             is_official: true,
             variant: None,
-            front: side(&format!("{}.png", card_id)),
-            backs,
-            collection: "test-collection".to_string(),
-            back_group: Some("card".to_string()),
+            front: side("front.jpg"),
+            backs: backs.iter().map(|key| side(key)).collect(),
+            collection: "nsg".into(),
+            back_group: Some("corp".into()),
             pack_id: None,
             date_release: None,
             position: None,
@@ -459,96 +606,266 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_printing_with_no_real_back_gets_the_generic_card_back() {
-        // "agot" ships one back_group ("card") with one physical back file,
-        // so any printing without its own real back should be paired with
-        // exactly that file.
-        let card_backs = card_backs::fetch_card_backs("agot").await.unwrap();
-        let expected_back = card_backs[0].0.file;
+    async fn generate(autofill: bool, with_back: bool) -> Result<Vec<u8>> {
+        generate_mpc_zip(
+            vec![
+                a_printing(with_back),
+                a_printing(with_back),
+                a_printing(with_back),
+            ],
+            &FakeImages,
+            MpcOptions {
+                autofill,
+                ..MpcOptions::default()
+            },
+            Vec::new(),
+            None,
+        )
+        .await
+    }
 
-        let output = generate_mpc_zip(
-            "agot",
-            vec![printing("card-a", Vec::new())],
-            &MockImageProvider,
+    fn bled_side(key: &str) -> crate::models::CardSide {
+        crate::models::CardSide {
+            image_key: None,
+            bleed_image_key: Some(key.to_string()),
+        }
+    }
+
+    async fn only_image_in(bytes: Vec<u8>) -> (String, Vec<u8>) {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let name = (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .find(|n| n.ends_with(".jpg") || n.ends_with(".png"))
+            .expect("no image in the zip");
+
+        let mut written = Vec::new();
+        std::io::Read::read_to_end(&mut archive.by_name(&name).unwrap(), &mut written).unwrap();
+        (name, written)
+    }
+
+    #[tokio::test]
+    async fn a_bled_source_reaches_the_zip_as_its_own_bytes() {
+        // Nothing to crop, pad or upscale, so decoding it only to re-encode
+        // would spend a jpeg generation arriving at the same picture.
+        let printing = Printing {
+            front: bled_side("front.bleed.jpg"),
+            backs: vec![bled_side("back.bleed.jpg")],
+            ..a_printing_with_backs(&[])
+        };
+        let bytes = generate_mpc_zip(
+            vec![printing],
+            &FakeImages,
             MpcOptions::default(),
-            card_backs,
+            Vec::new(),
             None,
         )
         .await
         .unwrap();
 
-        assert_eq!(output.autofill_slots.len(), 1);
+        let (_, written) = only_image_in(bytes).await;
+        let source = FakeImages.get_image_bytes("front.bleed.jpg").await.unwrap();
+
+        assert_eq!(written, source);
+    }
+
+    #[tokio::test]
+    async fn an_unbled_source_is_still_encoded_with_its_generated_bleed() {
+        let bytes = generate(false, false).await.unwrap();
+        let (_, written) = only_image_in(bytes).await;
+        let source = FakeImages.get_image_bytes("front.jpg").await.unwrap();
+
+        assert_ne!(written, source);
+        let out = image::load_from_memory(&written).unwrap().to_rgb8();
+        assert_eq!(out.dimensions(), (816, 1110));
+    }
+
+    async fn zip_entries(autofill: bool, with_back: bool) -> Vec<String> {
+        let bytes = generate(autofill, with_back).await.unwrap();
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn without_the_xml_every_copy_still_gets_its_own_file() {
+        let names = zip_entries(false, true).await;
+
         assert_eq!(
-            output.autofill_slots[0].back_filename.as_deref(),
-            Some(expected_back)
+            names,
+            vec![
+                "card-images/hedge_fund-official-nsg-1-back.jpg",
+                "card-images/hedge_fund-official-nsg-2-back.jpg",
+                "card-images/hedge_fund-official-nsg-3-back.jpg",
+                "card-images/hedge_fund-official-nsg-1.jpg",
+                "card-images/hedge_fund-official-nsg-2.jpg",
+                "card-images/hedge_fund-official-nsg-3.jpg",
+            ]
         );
     }
 
     #[tokio::test]
-    async fn a_printing_with_a_real_back_uses_its_own_image_not_the_generic_one() {
-        let card_backs = card_backs::fetch_card_backs("agot").await.unwrap();
+    async fn with_the_xml_repeat_copies_share_one_file() {
+        let names = zip_entries(true, true).await;
 
-        let output = generate_mpc_zip(
-            "agot",
-            vec![printing("card-b", vec![side("card-b-back.png")])],
-            &MockImageProvider,
-            MpcOptions::default(),
-            card_backs,
-            None,
-        )
-        .await
-        .unwrap();
+        assert_eq!(
+            names,
+            vec![
+                "card-images/hedge_fund-official-nsg-1-back.jpg",
+                "card-images/hedge_fund-official-nsg-1.jpg",
+                "order.xml",
+            ]
+        );
+    }
 
-        assert_eq!(output.autofill_slots.len(), 1);
-        let back_filename = output.autofill_slots[0].back_filename.as_deref().unwrap();
+    #[tokio::test]
+    async fn autofilling_cards_that_have_no_back_image_is_an_error() {
+        let err = generate(true, false).await.unwrap_err();
+
         assert!(
-            back_filename.contains("card-b"),
-            "expected the real back's own filename, got {back_filename}"
+            err.to_string().contains("No card has a back image"),
+            "unexpected error: {}",
+            err
         );
     }
 
     #[tokio::test]
-    async fn an_unclassified_card_gets_no_generic_back_but_still_generates() {
-        // back_group: None (an adapter that couldn't classify the card at
-        // all) must not crash the lookup or the zip -- it just means no
-        // generic back is available for it.
-        let card_backs = card_backs::fetch_card_backs("agot").await.unwrap();
-        let mut unclassified = printing("card-c", Vec::new());
-        unclassified.back_group = None;
+    async fn cards_with_no_back_image_are_fine_when_not_autofilling() {
+        let names = zip_entries(false, false).await;
 
-        let output = generate_mpc_zip(
-            "agot",
-            vec![unclassified],
-            &MockImageProvider,
-            MpcOptions::default(),
-            card_backs,
+        assert_eq!(names.len(), 3);
+        assert!(!names.contains(&"order.xml".to_string()));
+    }
+
+    #[tokio::test]
+    async fn include_manifest_bundles_manifest_csv_and_json() {
+        let bytes = generate_mpc_zip(
+            vec![a_printing(false)],
+            &FakeImages,
+            MpcOptions {
+                include_manifest: true,
+                ..MpcOptions::default()
+            },
+            Vec::new(),
             None,
         )
         .await
         .unwrap();
 
-        assert_eq!(output.autofill_slots.len(), 1);
-        assert_eq!(output.autofill_slots[0].back_filename, None);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut csv = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("manifest.csv").unwrap(), &mut csv)
+            .unwrap();
+        assert!(csv.contains("hedge_fund"));
+        assert!(archive.by_name("manifest.json").is_ok());
     }
 
-    #[test]
-    fn autofill_xml_pairs_each_front_with_its_own_back_by_slot_index() {
-        let slots = vec![
-            AutofillSlot {
-                front_filename: "player-images/a-official-core-1.jpg".into(),
-                back_filename: Some("player_original.jpg".into()),
-            },
-            AutofillSlot {
-                front_filename: "player-images/b-official-core-1.jpg".into(),
-                back_filename: None,
-            },
-        ];
-        let xml = generate_mpc_autofill_xml(&slots, MpcAutofillOptions::default());
+    #[tokio::test]
+    async fn without_include_manifest_no_manifest_files_are_bundled() {
+        let names = zip_entries(false, false).await;
 
-        assert!(xml.contains("<slots>0</slots><name>a-official-core-1.jpg</name>"));
-        assert!(xml.contains("<slots>0</slots><name>player_original.jpg</name>"));
-        assert!(!xml.contains("<slots>1</slots><name>player_original"));
-        assert!(xml.contains("<cardback>player_original.jpg</cardback>"));
+        assert!(!names.contains(&"manifest.csv".to_string()));
+        assert!(!names.contains(&"manifest.json".to_string()));
+    }
+
+    async fn zip_entries_of(printings: Vec<Printing>, autofill: bool) -> Vec<String> {
+        let bytes = generate_mpc_zip(
+            printings,
+            &FakeImages,
+            MpcOptions {
+                autofill,
+                ..MpcOptions::default()
+            },
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        (0..archive.len())
+            .map(|i| archive.by_index(i).unwrap().name().to_string())
+            .collect()
+    }
+
+    /// The PDF path prints one card per back, all sharing the front, so MPC has
+    /// to lay out the same cards.
+    #[tokio::test]
+    async fn a_card_with_several_backs_becomes_one_card_per_back() {
+        let names = zip_entries_of(
+            vec![a_printing_with_backs(&["b1.jpg", "b2.jpg", "b3.jpg"])],
+            false,
+        )
+        .await;
+
+        assert_eq!(
+            names,
+            vec![
+                "card-images/hedge_fund-official-nsg-1-back.jpg",
+                "card-images/hedge_fund-official-nsg-2-back.jpg",
+                "card-images/hedge_fund-official-nsg-3-back.jpg",
+                "card-images/hedge_fund-official-nsg-1.jpg",
+                "card-images/hedge_fund-official-nsg-2.jpg",
+                "card-images/hedge_fund-official-nsg-3.jpg",
+            ],
+            "each back needs its own card, and each card its own front"
+        );
+    }
+
+    #[tokio::test]
+    async fn several_backs_take_a_position_each_sharing_one_front_file() {
+        let printings = vec![a_printing_with_backs(&["b1.jpg", "b2.jpg", "b3.jpg"])];
+        let bytes = generate_mpc_zip(
+            printings,
+            &FakeImages,
+            MpcOptions {
+                autofill: true,
+                ..MpcOptions::default()
+            },
+            Vec::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("order.xml").unwrap(), &mut xml)
+            .unwrap();
+
+        assert!(xml.contains("<quantity>3</quantity>"), "{}", xml);
+        // One front file, named once per position, so it is uploaded once.
+        assert_eq!(
+            xml.matches("<id>./card-images/hedge_fund-official-nsg-1.jpg</id>")
+                .count(),
+            3,
+            "{}",
+            xml
+        );
+        for position in 1..=3 {
+            let back = format!(
+                "<id>./card-images/hedge_fund-official-nsg-{}-back.jpg</id>",
+                position
+            );
+            assert!(xml.contains(&back), "missing {}: {}", back, xml);
+        }
+        for slot in ["<slots>0</slots>", "<slots>1</slots>", "<slots>2</slots>"] {
+            assert!(xml.contains(slot), "missing {}: {}", slot, xml);
+        }
+    }
+
+    /// Copies of a multi-back card still print one of each, as the PDF path does.
+    #[tokio::test]
+    async fn asking_for_copies_of_a_multi_back_card_still_gives_one_of_each() {
+        let printing = a_printing_with_backs(&["b1.jpg", "b2.jpg"]);
+        let names = zip_entries_of(vec![printing.clone(), printing.clone(), printing], false).await;
+
+        assert_eq!(
+            names.len(),
+            4,
+            "two fronts and two backs, not six: {:?}",
+            names
+        );
     }
 }

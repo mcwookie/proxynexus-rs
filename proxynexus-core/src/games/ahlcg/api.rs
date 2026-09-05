@@ -2,67 +2,28 @@ use crate::error::{ProxyNexusError, Result};
 use crate::games::ahlcg::models::{AhdbCard, AhdbDecklist, AhdbPack};
 use crate::games::fetch_json;
 use crate::models::{Decklist, DecklistEntry};
-use std::collections::HashSet;
 
 const BASE_URL: &str = "https://arkhamdb.com/api/public";
 
-/// Fetches all packs (sets/expansions). ArkhamDB returns this as a plain
-/// JSON array, unlike NetrunnerDB's paginated JSON:API envelope -- no
-/// pagination loop needed.
 pub async fn fetch_packs() -> Result<Vec<AhdbPack>> {
     fetch_json(&format!("{BASE_URL}/packs/")).await
 }
 
-/// Fetches every card, correctly and completely, by iterating pack-by-pack
-/// via fetch_cards_for_pack() rather than the bulk /api/public/cards/
-/// endpoint.
+/// Every card, in one request.
 ///
-/// Confirmed by direct comparison that the bulk endpoint is badly
-/// incomplete: it returned 1,983 cards total against packs.json's summed
-/// `total` field of 8,422, and for the Core Set specifically returned only
-/// 105 of the pack's 184 cards (183 via the per-pack endpoint). Same class
-/// of issue as the MarvelCDB adapter's bulk-endpoint bug, just worse.
-///
-/// Slower (~115 requests instead of 1) but the resulting catalog is
-/// actually complete.
-pub async fn fetch_all_cards(packs: &[AhdbPack]) -> Result<Vec<AhdbCard>> {
-    let mut cards = Vec::new();
-    let mut seen_codes = HashSet::new();
+/// `encounter=1` is what makes it every card: without it ArkhamDB returns the
+/// player cards alone, 1983 of the 5929 records, which reads like a truncated
+/// response rather than a filtered one.
+pub async fn fetch_all_cards() -> Result<Vec<AhdbCard>> {
+    let cards: Vec<AhdbCard> = fetch_json(&format!("{BASE_URL}/cards/?encounter=1")).await?;
 
-    for pack in packs {
-        let pack_cards = fetch_cards_for_pack(&pack.code).await?;
-        for card in pack_cards {
-            if seen_codes.insert(card.code.clone()) {
-                cards.push(card);
-            }
-        }
-    }
-
-    Ok(cards)
+    // A card whose two faces are each a card in their own right is returned
+    // twice, and the half ArkhamDB does not index the card under is flagged
+    // hidden. That half is a face rather than a card, so it is dropped: keeping
+    // it would put a second catalog entry behind one printed card.
+    Ok(cards.into_iter().filter(|card| !card.hidden).collect())
 }
 
-/// Fetches cards for a single pack. Unlike MarvelCDB, ArkhamDB represents a
-/// double-sided card (e.g. an investigator's front/back) as one entry with
-/// `imagesrc`/`backimagesrc` fields rather than a separate hidden card, so
-/// no linked-card *flattening* (MarvelCDB-style card-splitting) is needed
-/// here. ArkhamDB does still have its own `linked_to_code`/`linked_card`
-/// for a different case -- a card whose back is a mechanically distinct
-/// card (e.g. an ally that flips into an enemy) -- deserialized directly
-/// onto `AhdbCard` and used only to enrich the manifest, not to split
-/// catalog entries. See `AhdbCard::linked_card`'s doc comment.
-pub async fn fetch_cards_for_pack(pack_code: &str) -> Result<Vec<AhdbCard>> {
-    fetch_json(&format!("{BASE_URL}/cards/{pack_code}")).await
-}
-
-/// Fetches a decklist by its ArkhamDB URL.
-///
-/// Accepts URLs like:
-///   https://arkhamdb.com/decklist/view/12345/some-deck-name-1.0
-///
-/// Does not add the investigator card itself, matching how every other
-/// adapter's decklist parsing leaves the identity/investigator card for the
-/// user to add separately -- ArkhamDB reports it via a separate
-/// `investigator_code` field, not in `slots`.
 pub async fn fetch_decklist_from_arkhamdb(url: &str) -> Result<Decklist> {
     let decklist_id = parse_arkhamdb_decklist_url(url)?;
     let api_url = format!("{BASE_URL}/decklist/{decklist_id}");
