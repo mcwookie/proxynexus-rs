@@ -1,6 +1,7 @@
 pub mod agot;
 pub mod ahlcg;
 pub mod coclcg;
+pub mod cohccg;
 pub mod l5r;
 pub mod lotrlcg;
 pub mod marvel_champions;
@@ -13,6 +14,7 @@ use crate::error::{ProxyNexusError, Result};
 use crate::games::agot::adapter::AgotAdapter;
 use crate::games::ahlcg::adapter::AhlcgAdapter;
 use crate::games::coclcg::adapter::CocAdapter;
+use crate::games::cohccg::adapter::CohAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
@@ -42,6 +44,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(WhiAdapter::new()),
         Box::new(WhcAdapter::new()),
         Box::new(CocAdapter::new()),
+        Box::new(CohAdapter::new()),
     ];
 
     for adapter in adapters {
