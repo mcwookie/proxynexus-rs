@@ -54,7 +54,8 @@ fn build_cards_and_versions(coc_cards: Vec<CocCard>) -> (Vec<Card>, Vec<CardVers
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
             back_group: Some(card.back_group),
-            // Fork-only field, unused upstream -- see catalog::Card's doc comment.
+            // Fork-only fields, unused upstream -- see catalog::Card's doc comment.
+            rarity: None,
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,

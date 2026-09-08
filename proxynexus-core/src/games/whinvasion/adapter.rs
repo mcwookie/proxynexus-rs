@@ -62,6 +62,7 @@ fn build_cards_and_versions(
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
             back_group: Some(WHI_BACK_GROUP.to_string()),
+            rarity: None,
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,

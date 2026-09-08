@@ -44,6 +44,7 @@ struct CardDbRow {
     title: String,
     title_normalized: String,
     back_group: Option<String>,
+    rarity: Option<String>,
     linked_card_code: Option<String>,
     linked_card_name: Option<String>,
     linked_card_back_group: Option<String>,
@@ -176,6 +177,7 @@ impl DbStorage {
                 title TEXT NOT NULL,
                 title_normalized TEXT NOT NULL,
                 back_group TEXT,
+                rarity TEXT,
                 linked_card_code TEXT,
                 linked_card_name TEXT,
                 linked_card_back_group TEXT
@@ -234,6 +236,14 @@ impl DbStorage {
             .await;
         let _ = self
             .execute("ALTER TABLE cards ADD COLUMN linked_card_back_group TEXT")
+            .await;
+        // Fork-only: `rarity` (`common` / `uncommon` / `rare` / `battle
+        // pack`) -- only populated by games that actually have card
+        // rarities (City of Heroes CCG); NULL for every LCG. Same
+        // best-effort migration pattern as the columns above: reruns hit
+        // "column already exists", which is the no-op we want.
+        let _ = self
+            .execute("ALTER TABLE cards ADD COLUMN rarity TEXT")
             .await;
         // Same gap as `back_group` above, on `card_versions` instead of
         // `cards` -- `api_id` was added to the `CREATE TABLE IF NOT EXISTS`
@@ -323,13 +333,17 @@ impl DbStorage {
             let rows: Vec<CardDbRow> = payload.rows_as()?;
             for chunk in rows.chunks(500) {
                 sql.push_str(
-                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group, linked_card_code, linked_card_name, linked_card_back_group) VALUES ",
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, back_group, rarity, linked_card_code, linked_card_name, linked_card_back_group) VALUES ",
                 );
                 let values: Vec<String> = chunk
                     .iter()
                     .map(|row| {
                         let back_group = row
                             .back_group
+                            .as_ref()
+                            .map_or("NULL".to_string(), |s| quote_sql_string(s));
+                        let rarity = row
+                            .rarity
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         let linked_card_code = row
@@ -345,13 +359,14 @@ impl DbStorage {
                             .as_ref()
                             .map_or("NULL".to_string(), |s| quote_sql_string(s));
                         format!(
-                            "({}, {}, {}, {}, {}, {}, {}, {}, {})",
+                            "({}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
                             quote_sql_string(&row.id),
                             quote_sql_string(&row.api_id),
                             quote_sql_string(&row.game_id),
                             quote_sql_string(&row.title),
                             quote_sql_string(&row.title_normalized),
                             back_group,
+                            rarity,
                             linked_card_code,
                             linked_card_name,
                             linked_card_back_group

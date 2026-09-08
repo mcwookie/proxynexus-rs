@@ -141,6 +141,7 @@ fn build_cards_and_versions(
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
             back_group: back_group_for(&card.type_code),
+            rarity: None,
             linked_card_code: card.back_link.clone(),
             linked_card_name: linked.map(|l| l.name.clone()),
             linked_card_back_group: linked.and_then(|l| back_group_for(&l.type_code)),

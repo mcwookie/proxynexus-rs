@@ -58,7 +58,8 @@ fn build_cards_and_versions(whc_cards: Vec<WhcCard>) -> (Vec<Card>, Vec<CardVers
             title: title.to_string(),
             title_normalized: normalize_title(title),
             back_group: Some(WHC_BACK_GROUP.to_string()),
-            // Fork-only field, unused upstream -- see catalog::Card's doc comment.
+            // Fork-only fields, unused upstream -- see catalog::Card's doc comment.
+            rarity: None,
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,

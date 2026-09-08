@@ -60,6 +60,7 @@ fn build_cards_and_versions(coh_cards: Vec<CohCard>) -> (Vec<Card>, Vec<CardVers
             title: card.name.clone(),
             title_normalized: normalize_title(&card.name),
             back_group: Some(COH_BACK_GROUP.to_string()),
+            rarity: Some(card.rarity),
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,
@@ -132,6 +133,7 @@ mod tests {
         assert_eq!(cards[0].id, "arena_011");
         assert_eq!(cards[0].title, "Card arena_011");
         assert_eq!(cards[0].back_group.as_deref(), Some("card"));
+        assert_eq!(cards[0].rarity.as_deref(), Some("rare"));
         assert_eq!(versions[0].card_id, "arena_011");
         assert_eq!(versions[0].pack_id, "arena");
     }
