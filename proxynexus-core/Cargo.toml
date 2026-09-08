@@ -27,6 +27,8 @@ burn-onnx = { version = "0.21.0-pre.3", optional = true }
 async-once-cell = "0.5.4"
 async-trait = "0.1.89"
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
+rand = "0.8.5"
+rand_chacha = "0.3.1"
 
 [features]
 upscaling = ["burn", "burn-store", "burn-onnx", "burn-wgpu"]

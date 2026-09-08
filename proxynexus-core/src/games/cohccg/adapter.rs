@@ -4,6 +4,7 @@ use crate::card_store::normalize_title;
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::error::Result;
+use crate::card_source::{BoosterSlot, BoosterSpec};
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::cohccg::models::{CohCard, CohPack};
@@ -14,6 +15,28 @@ use async_trait::async_trait;
 /// back group. Type and rarity are card attributes, not reverses.
 #[cfg(not(target_arch = "wasm32"))]
 const COH_BACK_GROUP: &str = "card";
+
+/// Retail booster: 11 cards, 7 common + 3 uncommon + 1 rare. Identical for
+/// Arena and Secret Origins; `battle pack` cards were starter/battle-pack
+/// exclusives and never appeared in boosters, so they are not a slot.
+/// (archive.paragonwiki.com City of Heroes Collectible Card Game, "Retail
+/// Packs".)
+const COH_BOOSTER: BoosterSpec = BoosterSpec {
+    slots: &[
+        BoosterSlot {
+            rarity: "common",
+            count: 7,
+        },
+        BoosterSlot {
+            rarity: "uncommon",
+            count: 3,
+        },
+        BoosterSlot {
+            rarity: "rare",
+            count: 1,
+        },
+    ],
+};
 
 pub struct CohAdapter {}
 
@@ -40,6 +63,10 @@ impl GameAdapterInfo for CohAdapter {
 
     fn subdomains(&self) -> Vec<&'static str> {
         vec!["cohccg"]
+    }
+
+    fn booster_spec(&self) -> Option<BoosterSpec> {
+        Some(COH_BOOSTER)
     }
 }
 

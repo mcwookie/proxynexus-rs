@@ -30,6 +30,35 @@ pub trait GameAdapterInfo {
     fn subdomains(&self) -> Vec<&'static str> {
         vec![]
     }
+    /// The game's retail booster-pack layout, if it sold randomised
+    /// boosters. `None` for the LCGs (fixed-content packs) -- the booster
+    /// card source is unavailable for those games.
+    fn booster_spec(&self) -> Option<crate::card_source::BoosterSpec> {
+        None
+    }
+}
+
+/// The booster layout for `game_id`, or `None` if the game has no
+/// randomised booster format.
+pub fn get_booster_spec(game_id: &str) -> Option<crate::card_source::BoosterSpec> {
+    let adapters: Vec<Box<dyn GameAdapterInfo>> = vec![
+        Box::new(NetrunnerAdapter::new()),
+        Box::new(NetrunnerRebootAdapter::new()),
+        Box::new(L5rAdapter::new()),
+        Box::new(AgotAdapter::new()),
+        Box::new(LotrLcgAdapter::new()),
+        Box::new(MarvelChampionsAdapter::new()),
+        Box::new(AhlcgAdapter::new()),
+        Box::new(WhiAdapter::new()),
+        Box::new(WhcAdapter::new()),
+        Box::new(CocAdapter::new()),
+        Box::new(CohAdapter::new()),
+    ];
+
+    adapters
+        .into_iter()
+        .find(|a| a.game_id() == game_id)
+        .and_then(|a| a.booster_spec())
 }
 
 pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
