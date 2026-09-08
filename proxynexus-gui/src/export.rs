@@ -5,8 +5,9 @@ use anyhow::Context;
 use async_lock::Mutex;
 use dioxus::prelude::*;
 use proxynexus_core::card_backs;
-use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
+use proxynexus_core::card_source::{BoosterPack, CardSource, Cardlist, DecklistUrl, SetName};
 use proxynexus_core::db_storage::DbStorage;
+use proxynexus_core::games::get_booster_spec;
 use proxynexus_core::mpc::{MpcOptions, generate_mpc_zip};
 use proxynexus_core::pdf::{PdfOptions, generate_pdf};
 use proxynexus_core::query::apply_variant_overrides;
@@ -95,6 +96,7 @@ pub async fn run_export(
         ActiveSource::Cardlist(text) => (text.clone(), "Cardlist"),
         ActiveSource::SetName(name, _) => (name.clone(), "SetName"),
         ActiveSource::DecklistUrl(url) => (url.clone(), "DecklistUrl"),
+        ActiveSource::Booster { set, .. } => (set.clone(), "Booster"),
     };
 
     let resolved_printings = async {
@@ -117,6 +119,19 @@ pub async fn run_export(
                 .to_card_requests(&mut store)
                 .await
                 .context("Failed to fetch deck from Decklist API")?,
+            ActiveSource::Booster { set, packs, seed } => {
+                let spec = get_booster_spec(&active_game_id)
+                    .context("This game has no booster-pack format")?;
+                BoosterPack {
+                    set,
+                    packs,
+                    spec,
+                    seed: Some(seed),
+                }
+                .to_card_requests(&mut store)
+                .await
+                .context("Failed to open booster packs")?
+            }
         };
 
         let reqs = card_requests_res.requests;

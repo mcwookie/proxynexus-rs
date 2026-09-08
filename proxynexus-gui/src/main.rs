@@ -1,9 +1,10 @@
 #![allow(clippy::await_holding_invalid_type)]
 
 use dioxus::prelude::*;
-use proxynexus_core::card_source::{Cardlist, DecklistUrl, SetName};
+use proxynexus_core::card_source::{BoosterPack, Cardlist, DecklistUrl, SetName};
 use proxynexus_core::card_store::normalize_title;
 use proxynexus_core::db_storage::DbStorage;
+use proxynexus_core::games::get_booster_spec;
 use proxynexus_core::models::{Printing, ResolvedPrintings};
 use proxynexus_core::query::{apply_variant_overrides, resolve_query_printings};
 use std::collections::HashMap;
@@ -488,6 +489,26 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                 resolve_query_printings(&DecklistUrl(url), &mut db, &game_id)
                     .await
                     .map_err(anyhow::Error::from)
+            }
+            ActiveSource::Booster { set, packs, seed } => {
+                let Some(spec) = get_booster_spec(&game_id) else {
+                    return Ok(ResolvedPrintings::default());
+                };
+                if set.trim().is_empty() {
+                    return Ok(ResolvedPrintings::default());
+                }
+                resolve_query_printings(
+                    &BoosterPack {
+                        set,
+                        packs,
+                        spec,
+                        seed: Some(seed),
+                    },
+                    &mut db,
+                    &game_id,
+                )
+                .await
+                .map_err(anyhow::Error::from)
             }
         };
 
