@@ -473,11 +473,11 @@ fn Workspace(db_signal: Signal<Arc<Mutex<DbStorage>>>) -> Element {
                     .await
                     .map_err(anyhow::Error::from)
             }
-            ActiveSource::SetName(name) => {
+            ActiveSource::SetName(name, copies) => {
                 if name.trim().is_empty() {
                     return Ok(ResolvedPrintings::default());
                 }
-                resolve_query_printings(&SetName(name), &mut db, &game_id)
+                resolve_query_printings(&SetName(name, copies), &mut db, &game_id)
                     .await
                     .map_err(anyhow::Error::from)
             }

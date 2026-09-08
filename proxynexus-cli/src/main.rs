@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use clap::{Parser, Subcommand};
 use proxynexus_core::card_backs;
-use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
+use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetCopies, SetName};
 use proxynexus_core::catalog::CatalogManager;
 use proxynexus_core::collection_builder::build_collection;
 use proxynexus_core::collection_manager::CollectionManager;
@@ -64,6 +64,12 @@ enum Commands {
 
         #[arg(long)]
         list_sets: bool,
+
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity. Handy
+        /// for CCGs, where cards are singles.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
     },
     Export {
         #[arg(short, long, default_value = "init.sql.gz")]
@@ -146,6 +152,11 @@ enum GenerateType {
         #[arg(long, help = "Print each card's back on the following page, mirrored.")]
         double_sided: bool,
 
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
+
         #[arg(
             long,
             requires = "double_sided",
@@ -189,6 +200,11 @@ enum GenerateType {
 
         #[arg(long, default_value = "S30", help = "S27, S30, S33, M31, or P10")]
         cardstock: String,
+
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
 
         /// Fork-only: also bundle manifest.csv/manifest.json into the zip --
         /// one row per printing with its back_group (and, for a card whose
@@ -254,6 +270,7 @@ async fn run() -> anyhow::Result<()> {
             set_name,
             decklist_url,
             list_sets,
+            copies,
         } => {
             handle_query(
                 &mut db,
@@ -262,6 +279,7 @@ async fn run() -> anyhow::Result<()> {
                 set_name,
                 decklist_url,
                 list_sets,
+                copies,
             )
             .await
         }
@@ -402,7 +420,7 @@ async fn handle_catalog_action(
 
 enum InputSource {
     Cardlist(String),
-    SetName(String),
+    SetName(String, SetCopies),
     DecklistUrl(String),
 }
 
@@ -410,11 +428,12 @@ fn determine_input_source(
     cardlist: Option<String>,
     set_name: Option<String>,
     decklist_url: Option<String>,
+    copies: Option<u32>,
 ) -> InputSource {
     if let Some(list) = cardlist {
         InputSource::Cardlist(list)
     } else if let Some(name) = set_name {
-        InputSource::SetName(name)
+        InputSource::SetName(name, copies.map_or(SetCopies::AsPrinted, SetCopies::Fixed))
     } else if let Some(url) = decklist_url {
         InputSource::DecklistUrl(url)
     } else {
@@ -435,7 +454,7 @@ async fn get_printings_from_source(
             .to_card_requests(&mut store)
             .await
             .context("Failed to parse cardlist")?,
-        InputSource::SetName(name) => SetName(name.clone())
+        InputSource::SetName(name, copies) => SetName(name.clone(), copies)
             .to_card_requests(&mut store)
             .await
             .with_context(|| format!("Failed to get cards for set '{}'", name))?,
@@ -514,6 +533,7 @@ async fn handle_generate(
             print_layout,
             upscale,
             double_sided,
+            copies,
             back_label,
         } => {
             let page_size_enum = parse_page_size(&page_size).context("Invalid page size")?;
@@ -529,7 +549,7 @@ async fn handle_generate(
                     cut_line_thickness
                 ));
             }
-            let source = determine_input_source(cardlist, set_name, decklist_url);
+            let source = determine_input_source(cardlist, set_name, decklist_url, copies);
 
             let printings = get_printings_from_source(db, game, source).await?;
             let labels = card_backs::allowed_labels(db, game, &printings).await?;
@@ -580,9 +600,10 @@ async fn handle_generate(
             autofill,
             back_label,
             cardstock,
+            copies,
             manifest,
         } => {
-            let source = determine_input_source(cardlist, set_name, decklist_url);
+            let source = determine_input_source(cardlist, set_name, decklist_url, copies);
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
@@ -664,6 +685,7 @@ async fn handle_query(
     set_name: Option<String>,
     decklist_url: Option<String>,
     list_sets: bool,
+    copies: Option<u32>,
 ) -> anyhow::Result<()> {
     if list_sets {
         println!("\nAvailable Sets:\n");
@@ -676,11 +698,13 @@ async fn handle_query(
         return Ok(());
     }
 
-    let source = determine_input_source(cardlist, set_name, decklist_url);
+    let source = determine_input_source(cardlist, set_name, decklist_url, copies);
 
     let output = match source {
         InputSource::Cardlist(list) => generate_query_output(&Cardlist(list), db, game).await,
-        InputSource::SetName(name) => generate_query_output(&SetName(name), db, game).await,
+        InputSource::SetName(name, c) => {
+            generate_query_output(&SetName(name, c), db, game).await
+        }
         InputSource::DecklistUrl(url) => generate_query_output(&DecklistUrl(url), db, game).await,
     };
 

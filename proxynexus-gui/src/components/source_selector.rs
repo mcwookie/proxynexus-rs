@@ -1,6 +1,7 @@
 use crate::components::card_list_input::CardListInput;
 use async_lock::Mutex;
 use dioxus::prelude::*;
+use proxynexus_core::card_source::SetCopies;
 use proxynexus_core::card_store::{AvailablePack, CardStore};
 use proxynexus_core::db_storage::DbStorage;
 use proxynexus_core::games::get_decklist_adapter;
@@ -9,8 +10,15 @@ use std::sync::Arc;
 #[derive(Clone, PartialEq, Debug)]
 pub enum ActiveSource {
     Cardlist(String),
-    SetName(String),
+    /// A whole-set request: the set name, and how many copies of each card.
+    SetName(String, SetCopies),
     DecklistUrl(String),
+}
+
+/// An empty "copies" field means the retail playset; a number is a flat
+/// override applied to every card in the set.
+fn set_copies_of(n: Option<u32>) -> SetCopies {
+    n.map_or(SetCopies::AsPrinted, SetCopies::Fixed)
 }
 
 impl Default for ActiveSource {
@@ -39,7 +47,7 @@ pub struct SourceSelectorProps {
 pub fn SourceSelector(props: SourceSelectorProps) -> Element {
     let mut tab = use_signal(|| match &*props.source_state.peek() {
         ActiveSource::Cardlist(t) if !t.is_empty() => "list",
-        ActiveSource::SetName(t) if !t.is_empty() => "set",
+        ActiveSource::SetName(t, _) if !t.is_empty() => "set",
         ActiveSource::DecklistUrl(t) if !t.is_empty() => "decklist",
         _ => "list",
     });
@@ -55,6 +63,9 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
         }
     });
     let mut set_name = use_signal(String::new);
+    // None = each card's retail playset quantity; Some(n) = n copies of every
+    // card in the set (for CCGs, where cards are singles).
+    let mut set_copies = use_signal(|| None::<u32>);
     let mut decklist_url = use_signal(String::new);
     let mut set_sort_mode = use_signal(|| SetSortMode::ReleaseDate);
 
@@ -71,6 +82,7 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
             tab.set("list");
             list_text.set(String::new());
             set_name.set(String::new());
+            set_copies.set(None);
             decklist_url.set(String::new());
             source_state.set(ActiveSource::Cardlist(String::new()));
             prev_game_id.set(current);
@@ -154,7 +166,8 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
                             props.on_source_changed.call(());
                         }
                         tab.set("set");
-                        source_state.set(ActiveSource::SetName(set_name()));
+                        source_state
+                            .set(ActiveSource::SetName(set_name(), set_copies_of(set_copies())));
                     },
                     "Set"
                 }
@@ -216,7 +229,8 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
                         onchange: move |evt| {
                             props.on_source_changed.call(());
                             set_name.set(evt.value());
-                            source_state.set(ActiveSource::SetName(evt.value()));
+                            source_state
+                                .set(ActiveSource::SetName(evt.value(), set_copies_of(set_copies())));
                         },
                         option {
                             value: "",
@@ -231,6 +245,26 @@ pub fn SourceSelector(props: SourceSelectorProps) -> Element {
                                 "{pack.name}"
                             }
                         }
+                    }
+                    div { class: "flex items-center gap-2 mt-2 text-sm text-gray-600",
+                        label { r#for: "set-copies", "Copies of each card:" }
+                        input {
+                            id: "set-copies",
+                            r#type: "number",
+                            min: "1",
+                            class: "w-24 p-1.5 border border-gray-300 rounded-md outline-none focus:ring-2 focus:ring-blue-400 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed",
+                            disabled: is_disabled(),
+                            placeholder: "playset",
+                            value: set_copies().map(|n| n.to_string()).unwrap_or_default(),
+                            oninput: move |evt| {
+                                let parsed = evt.value().trim().parse::<u32>().ok().filter(|n| *n >= 1);
+                                set_copies.set(parsed);
+                                source_state
+                                    .set(ActiveSource::SetName(set_name(), set_copies_of(parsed)));
+                                props.on_source_changed.call(());
+                            }
+                        }
+                        span { class: "text-gray-400", "leave blank for the retail playset" }
                     }
                 },
                 "decklist" => rsx! {

@@ -10,7 +10,31 @@ pub trait CardSource {
 }
 
 pub struct Cardlist(pub String);
-pub struct SetName(pub String);
+
+/// How many copies of each card a whole-set request should emit.
+///
+/// LCGs ship a fixed playset per card (`card_versions.quantity`, usually
+/// 3); CCGs are singles (`quantity` 1), so proxying a full CCG set as a
+/// playset needs an explicit multiplier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SetCopies {
+    /// One copy per `card_versions.quantity` -- the retail playset.
+    #[default]
+    AsPrinted,
+    /// Exactly this many copies of every card in the set.
+    Fixed(u32),
+}
+
+/// A whole-set request: every card in the named pack, `copies` of each.
+pub struct SetName(pub String, pub SetCopies);
+
+impl SetName {
+    /// A set request that emits each card's retail playset quantity.
+    pub fn as_printed(name: impl Into<String>) -> Self {
+        Self(name.into(), SetCopies::AsPrinted)
+    }
+}
+
 pub struct DecklistUrl(pub String);
 
 impl CardSource for DecklistUrl {

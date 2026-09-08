@@ -93,7 +93,7 @@ pub async fn run_export(
 
     let (source_text, source_type) = match &active_source {
         ActiveSource::Cardlist(text) => (text.clone(), "Cardlist"),
-        ActiveSource::SetName(name) => (name.clone(), "SetName"),
+        ActiveSource::SetName(name, _) => (name.clone(), "SetName"),
         ActiveSource::DecklistUrl(url) => (url.clone(), "DecklistUrl"),
     };
 
@@ -109,7 +109,7 @@ pub async fn run_export(
                 .to_card_requests(&mut store)
                 .await
                 .context("Failed to parse cardlist")?,
-            ActiveSource::SetName(name) => SetName(name)
+            ActiveSource::SetName(name, copies) => SetName(name, copies)
                 .to_card_requests(&mut store)
                 .await
                 .context("Failed to get set cards")?,

@@ -134,7 +134,7 @@ impl CardSource for Cardlist {
 impl CardSource for SetName {
     async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<ResolvedCardRequests> {
         store
-            .get_card_requests_from_set_name(&self.0)
+            .get_card_requests_from_set_name(&self.0, self.1)
             .await
             .map(|r| ResolvedCardRequests {
                 requests: r,
@@ -496,6 +496,7 @@ impl<'a> CardStore<'a> {
     async fn get_card_requests_from_set_name(
         &mut self,
         set_name: &str,
+        copies: crate::card_source::SetCopies,
     ) -> Result<Vec<CardRequest>> {
         let query = format!(
             "SELECT c.api_id as id, c.title, v.quantity, p.api_id as pack_id, v.position
@@ -516,6 +517,10 @@ impl<'a> CardStore<'a> {
             let request_rows = payload.rows_as::<CardRequestRow>()?;
 
             for row in request_rows {
+                let n = match copies {
+                    crate::card_source::SetCopies::AsPrinted => row.quantity.max(0) as usize,
+                    crate::card_source::SetCopies::Fixed(k) => k as usize,
+                };
                 results.extend(std::iter::repeat_n(
                     CardRequest {
                         title: row.title,
@@ -524,7 +529,7 @@ impl<'a> CardStore<'a> {
                         collection: None,
                         position: row.position,
                     },
-                    row.quantity as usize,
+                    n,
                 ));
             }
         }
@@ -1958,5 +1963,58 @@ mod tests {
 
         let result = store.resolve_decklist_to_requests(&decklist).await.unwrap();
         assert_eq!(result.requests[0].id, "gildor_inglorion_tples");
+    }
+
+    async fn seed_two_card_playset(db: &mut DbStorage) {
+        db.initialize_schema().await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('p_set', 'the_set', 'The Set', 'g')")
+            .await
+            .unwrap();
+        for (n, title) in [("a", "Alpha"), ("b", "Bravo")] {
+            db.execute(&format!(
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('c_{n}', '{n}', 'g', '{title}', '{n}')"
+            ))
+            .await
+            .unwrap();
+            db.execute(&format!(
+                "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_{n}', 'c_{n}', 'p_set', 3, 1)"
+            ))
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn set_copies_as_printed_emits_each_card_version_quantity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_two_card_playset(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        let reqs = SetName("The Set".into(), crate::card_source::SetCopies::AsPrinted)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
+
+        // two cards x quantity 3
+        assert_eq!(reqs.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn set_copies_fixed_overrides_the_playset_quantity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_two_card_playset(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        for (fixed, expected_total) in [(1u32, 2usize), (4, 8)] {
+            let reqs = SetName("The Set".into(), crate::card_source::SetCopies::Fixed(fixed))
+                .to_card_requests(&mut store)
+                .await
+                .unwrap()
+                .requests;
+            assert_eq!(reqs.len(), expected_total, "Fixed({fixed})");
+        }
     }
 }
