@@ -231,7 +231,8 @@ fn build_cards_and_versions(
             title_normalized: normalize_title(&title),
             title,
             back_group: back_group_for(&card.type_code, card.subtype_code.as_deref()),
-            // Fork-only field, unused upstream -- see catalog::Card's doc comment.
+            // Fork-only fields, unused upstream -- see catalog::Card's doc comment.
+            rarity: None,
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,

@@ -1,7 +1,7 @@
 use anyhow::{Context, anyhow};
 use clap::{Parser, Subcommand};
 use proxynexus_core::card_backs;
-use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetName};
+use proxynexus_core::card_source::{CardSource, Cardlist, DecklistUrl, SetCopies, SetName};
 use proxynexus_core::catalog::CatalogManager;
 use proxynexus_core::collection_builder::build_collection;
 use proxynexus_core::collection_manager::CollectionManager;
@@ -50,7 +50,7 @@ enum Commands {
     #[command(group(
     clap::ArgGroup::new("input")
         .required(true)
-        .args(["cardlist", "set_name", "decklist_url", "list_sets"]),
+        .args(["cardlist", "set_name", "decklist_url", "list_sets", "booster"]),
     ))]
     Query {
         #[arg(short, long)]
@@ -64,6 +64,25 @@ enum Commands {
 
         #[arg(long)]
         list_sets: bool,
+
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity. Handy
+        /// for CCGs, where cards are singles.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
+
+        /// Open random booster packs from this set instead of taking the
+        /// whole set. Uses the game's retail rarity slots (CCGs only).
+        #[arg(long)]
+        booster: Option<String>,
+
+        /// With --booster: how many packs to open.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        packs: u32,
+
+        /// With --booster: RNG seed for a reproducible pull.
+        #[arg(long)]
+        seed: Option<u64>,
     },
     Export {
         #[arg(short, long, default_value = "init.sql.gz")]
@@ -109,7 +128,7 @@ enum GenerateType {
     #[command(group(
         clap::ArgGroup::new("input")
             .required(true)
-            .args(["cardlist", "set_name", "decklist_url"]),
+            .args(["cardlist", "set_name", "decklist_url", "booster"]),
     ))]
     Pdf {
         #[arg(short, long)]
@@ -146,6 +165,24 @@ enum GenerateType {
         #[arg(long, help = "Print each card's back on the following page, mirrored.")]
         double_sided: bool,
 
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
+
+        /// Open random booster packs from this set (game's retail rarity
+        /// slots; CCGs only) instead of taking a whole set.
+        #[arg(long)]
+        booster: Option<String>,
+
+        /// With --booster: how many packs to open.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        packs: u32,
+
+        /// With --booster: RNG seed for a reproducible pull.
+        #[arg(long)]
+        seed: Option<u64>,
+
         #[arg(
             long,
             requires = "double_sided",
@@ -156,7 +193,7 @@ enum GenerateType {
     #[command(group(
         clap::ArgGroup::new("input")
             .required(true)
-            .args(["cardlist", "set_name", "decklist_url"]),
+            .args(["cardlist", "set_name", "decklist_url", "booster"]),
     ))]
     Mpc {
         #[arg(short, long)]
@@ -189,6 +226,24 @@ enum GenerateType {
 
         #[arg(long, default_value = "S30", help = "S27, S30, S33, M31, or P10")]
         cardstock: String,
+
+        /// With --set-name: emit exactly this many copies of every card in
+        /// the set, instead of each card's retail playset quantity.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        copies: Option<u32>,
+
+        /// Open random booster packs from this set (game's retail rarity
+        /// slots; CCGs only) instead of taking a whole set.
+        #[arg(long)]
+        booster: Option<String>,
+
+        /// With --booster: how many packs to open.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        packs: u32,
+
+        /// With --booster: RNG seed for a reproducible pull.
+        #[arg(long)]
+        seed: Option<u64>,
 
         /// Fork-only: also bundle manifest.csv/manifest.json into the zip --
         /// one row per printing with its back_group (and, for a card whose
@@ -254,6 +309,10 @@ async fn run() -> anyhow::Result<()> {
             set_name,
             decklist_url,
             list_sets,
+            copies,
+            booster,
+            packs,
+            seed,
         } => {
             handle_query(
                 &mut db,
@@ -262,6 +321,10 @@ async fn run() -> anyhow::Result<()> {
                 set_name,
                 decklist_url,
                 list_sets,
+                copies,
+                booster,
+                packs,
+                seed,
             )
             .await
         }
@@ -402,24 +465,52 @@ async fn handle_catalog_action(
 
 enum InputSource {
     Cardlist(String),
-    SetName(String),
+    SetName(String, SetCopies),
     DecklistUrl(String),
+    Booster {
+        set: String,
+        packs: u32,
+        seed: Option<u64>,
+    },
 }
 
 fn determine_input_source(
     cardlist: Option<String>,
     set_name: Option<String>,
     decklist_url: Option<String>,
+    copies: Option<u32>,
+    booster: Option<String>,
+    packs: u32,
+    seed: Option<u64>,
 ) -> InputSource {
     if let Some(list) = cardlist {
         InputSource::Cardlist(list)
+    } else if let Some(set) = booster {
+        InputSource::Booster { set, packs, seed }
     } else if let Some(name) = set_name {
-        InputSource::SetName(name)
+        InputSource::SetName(name, copies.map_or(SetCopies::AsPrinted, SetCopies::Fixed))
     } else if let Some(url) = decklist_url {
         InputSource::DecklistUrl(url)
     } else {
         unreachable!("clap ensures at least one input is provided")
     }
+}
+
+/// Build a `BoosterPack` source, resolving the game's retail rarity slots.
+fn booster_source(
+    game: &str,
+    set: String,
+    packs: u32,
+    seed: Option<u64>,
+) -> anyhow::Result<proxynexus_core::card_source::BoosterPack> {
+    let spec = proxynexus_core::games::get_booster_spec(game)
+        .ok_or_else(|| anyhow!("Game '{}' has no booster-pack format.", game))?;
+    Ok(proxynexus_core::card_source::BoosterPack {
+        set,
+        packs,
+        spec,
+        seed,
+    })
 }
 
 async fn get_printings_from_source(
@@ -435,7 +526,7 @@ async fn get_printings_from_source(
             .to_card_requests(&mut store)
             .await
             .context("Failed to parse cardlist")?,
-        InputSource::SetName(name) => SetName(name.clone())
+        InputSource::SetName(name, copies) => SetName(name.clone(), copies)
             .to_card_requests(&mut store)
             .await
             .with_context(|| format!("Failed to get cards for set '{}'", name))?,
@@ -443,6 +534,12 @@ async fn get_printings_from_source(
             .to_card_requests(&mut store)
             .await
             .with_context(|| format!("Failed to fetch deck from URL: {}", url))?,
+        InputSource::Booster { set, packs, seed } => {
+            booster_source(game, set.clone(), packs, seed)?
+                .to_card_requests(&mut store)
+                .await
+                .with_context(|| format!("Failed to open boosters from set '{}'", set))?
+        }
     };
 
     let card_requests = card_requests_res.requests;
@@ -514,6 +611,10 @@ async fn handle_generate(
             print_layout,
             upscale,
             double_sided,
+            copies,
+            booster,
+            packs,
+            seed,
             back_label,
         } => {
             let page_size_enum = parse_page_size(&page_size).context("Invalid page size")?;
@@ -529,7 +630,15 @@ async fn handle_generate(
                     cut_line_thickness
                 ));
             }
-            let source = determine_input_source(cardlist, set_name, decklist_url);
+            let source = determine_input_source(
+                cardlist,
+                set_name,
+                decklist_url,
+                copies,
+                booster,
+                packs,
+                seed,
+            );
 
             let printings = get_printings_from_source(db, game, source).await?;
             let labels = card_backs::allowed_labels(db, game, &printings).await?;
@@ -580,9 +689,21 @@ async fn handle_generate(
             autofill,
             back_label,
             cardstock,
+            copies,
+            booster,
+            packs,
+            seed,
             manifest,
         } => {
-            let source = determine_input_source(cardlist, set_name, decklist_url);
+            let source = determine_input_source(
+                cardlist,
+                set_name,
+                decklist_url,
+                copies,
+                booster,
+                packs,
+                seed,
+            );
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
@@ -657,6 +778,7 @@ async fn handle_generate(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_query(
     db: &mut DbStorage,
     game: &str,
@@ -664,6 +786,10 @@ async fn handle_query(
     set_name: Option<String>,
     decklist_url: Option<String>,
     list_sets: bool,
+    copies: Option<u32>,
+    booster: Option<String>,
+    packs: u32,
+    seed: Option<u64>,
 ) -> anyhow::Result<()> {
     if list_sets {
         println!("\nAvailable Sets:\n");
@@ -676,12 +802,35 @@ async fn handle_query(
         return Ok(());
     }
 
-    let source = determine_input_source(cardlist, set_name, decklist_url);
+    // Resolve the game's rarity slots up front so a "no booster format"
+    // error surfaces before any query work.
+    let booster_src = match &booster {
+        Some(set) => Some(booster_source(game, set.clone(), packs, seed)?),
+        None => None,
+    };
+
+    let source = determine_input_source(
+        cardlist,
+        set_name,
+        decklist_url,
+        copies,
+        booster,
+        packs,
+        seed,
+    );
 
     let output = match source {
         InputSource::Cardlist(list) => generate_query_output(&Cardlist(list), db, game).await,
-        InputSource::SetName(name) => generate_query_output(&SetName(name), db, game).await,
+        InputSource::SetName(name, c) => generate_query_output(&SetName(name, c), db, game).await,
         InputSource::DecklistUrl(url) => generate_query_output(&DecklistUrl(url), db, game).await,
+        InputSource::Booster { .. } => {
+            generate_query_output(
+                booster_src.as_ref().expect("booster source built above"),
+                db,
+                game,
+            )
+            .await
+        }
     };
 
     println!("\nQuery Results:\n");

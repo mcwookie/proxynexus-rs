@@ -49,6 +49,24 @@ struct CardRequestRow {
 }
 
 #[derive(FromGlueRow)]
+struct RarityCardRow {
+    id: String,
+    title: String,
+    rarity: Option<String>,
+    pack_id: String,
+    position: Option<i64>,
+}
+
+/// A catalogue card eligible to be drawn into a booster pack.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoolCard {
+    pub id: String,
+    pub title: String,
+    pub pack_id: String,
+    pub position: Option<i64>,
+}
+
+#[derive(FromGlueRow)]
 struct CardTitleRow {
     title: String,
 }
@@ -134,7 +152,7 @@ impl CardSource for Cardlist {
 impl CardSource for SetName {
     async fn to_card_requests(&self, store: &mut CardStore<'_>) -> Result<ResolvedCardRequests> {
         store
-            .get_card_requests_from_set_name(&self.0)
+            .get_card_requests_from_set_name(&self.0, self.1)
             .await
             .map(|r| ResolvedCardRequests {
                 requests: r,
@@ -496,6 +514,7 @@ impl<'a> CardStore<'a> {
     async fn get_card_requests_from_set_name(
         &mut self,
         set_name: &str,
+        copies: crate::card_source::SetCopies,
     ) -> Result<Vec<CardRequest>> {
         let query = format!(
             "SELECT c.api_id as id, c.title, v.quantity, p.api_id as pack_id, v.position
@@ -516,6 +535,10 @@ impl<'a> CardStore<'a> {
             let request_rows = payload.rows_as::<CardRequestRow>()?;
 
             for row in request_rows {
+                let n = match copies {
+                    crate::card_source::SetCopies::AsPrinted => row.quantity.max(0) as usize,
+                    crate::card_source::SetCopies::Fixed(k) => k as usize,
+                };
                 results.extend(std::iter::repeat_n(
                     CardRequest {
                         title: row.title,
@@ -524,7 +547,7 @@ impl<'a> CardStore<'a> {
                         collection: None,
                         position: row.position,
                     },
-                    row.quantity as usize,
+                    n,
                 ));
             }
         }
@@ -537,6 +560,50 @@ impl<'a> CardStore<'a> {
         }
 
         Ok(results)
+    }
+
+    /// Every card in the named set that carries a rarity, bucketed by that
+    /// rarity. Cards with no rarity (the LCGs, promos, unprinted cards) are
+    /// left out -- a booster can only draw from rated cards.
+    pub async fn get_set_cards_by_rarity(
+        &mut self,
+        set_name: &str,
+    ) -> Result<HashMap<String, Vec<PoolCard>>> {
+        let query = format!(
+            "SELECT c.api_id as id, c.title, c.rarity, p.api_id as pack_id, v.position
+             FROM cards c
+             JOIN card_versions v ON c.id = v.card_id
+             JOIN packs p ON v.pack_id = p.id
+             WHERE LOWER(p.name) = {}
+               AND c.game_id = {}
+             ORDER BY v.position, c.id",
+            quote_sql_string(&set_name.to_lowercase()),
+            quote_sql_string(&self.active_game_id)
+        );
+
+        let payloads = self.db.execute(&query).await?;
+        let mut by_rarity: HashMap<String, Vec<PoolCard>> = HashMap::new();
+
+        if let Some(payload) = payloads.into_iter().next() {
+            for row in payload.rows_as::<RarityCardRow>()? {
+                let Some(rarity) = row.rarity else { continue };
+                by_rarity.entry(rarity).or_default().push(PoolCard {
+                    id: row.id,
+                    title: row.title,
+                    pack_id: row.pack_id,
+                    position: row.position,
+                });
+            }
+        }
+
+        if by_rarity.is_empty() {
+            return Err(ProxyNexusError::Internal(format!(
+                "No cards with a rarity found for set '{}' -- booster packs need rarity data, which only some games have.",
+                set_name
+            )));
+        }
+
+        Ok(by_rarity)
     }
 
     pub async fn resolve_decklist_to_requests(
@@ -1958,5 +2025,211 @@ mod tests {
 
         let result = store.resolve_decklist_to_requests(&decklist).await.unwrap();
         assert_eq!(result.requests[0].id, "gildor_inglorion_tples");
+    }
+
+    async fn seed_two_card_playset(db: &mut DbStorage) {
+        db.initialize_schema().await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('p_set', 'the_set', 'The Set', 'g')")
+            .await
+            .unwrap();
+        for (n, title) in [("a", "Alpha"), ("b", "Bravo")] {
+            db.execute(&format!(
+                "INSERT INTO cards (id, api_id, game_id, title, title_normalized) VALUES ('c_{n}', '{n}', 'g', '{title}', '{n}')"
+            ))
+            .await
+            .unwrap();
+            db.execute(&format!(
+                "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v_{n}', 'c_{n}', 'p_set', 3, 1)"
+            ))
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn set_copies_as_printed_emits_each_card_version_quantity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_two_card_playset(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        let reqs = SetName("The Set".into(), crate::card_source::SetCopies::AsPrinted)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
+
+        // two cards x quantity 3
+        assert_eq!(reqs.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn set_copies_fixed_overrides_the_playset_quantity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_two_card_playset(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        for (fixed, expected_total) in [(1u32, 2usize), (4, 8)] {
+            let reqs = SetName(
+                "The Set".into(),
+                crate::card_source::SetCopies::Fixed(fixed),
+            )
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
+            assert_eq!(reqs.len(), expected_total, "Fixed({fixed})");
+        }
+    }
+
+    async fn seed_rarity_box(db: &mut DbStorage) {
+        db.initialize_schema().await.unwrap();
+        db.execute("INSERT INTO packs (id, api_id, name, game_id) VALUES ('p_box', 'the_box', 'The Box', 'g')")
+            .await
+            .unwrap();
+        let mut n = 0;
+        for (rarity, k) in [
+            ("common", 20),
+            ("uncommon", 10),
+            ("rare", 5),
+            ("battle pack", 4),
+        ] {
+            for _ in 0..k {
+                n += 1;
+                db.execute(&format!(
+                    "INSERT INTO cards (id, api_id, game_id, title, title_normalized, rarity) VALUES ('c{n}', 'c{n}', 'g', 'Card {n}', 'card_{n}', '{rarity}')"
+                ))
+                .await
+                .unwrap();
+                db.execute(&format!(
+                    "INSERT INTO card_versions (id, card_id, pack_id, quantity, position) VALUES ('v{n}', 'c{n}', 'p_box', 1, {n})"
+                ))
+                .await
+                .unwrap();
+            }
+        }
+    }
+
+    const TEST_BOOSTER: crate::card_source::BoosterSpec = crate::card_source::BoosterSpec {
+        slots: &[
+            crate::card_source::BoosterSlot {
+                rarity: "common",
+                count: 7,
+            },
+            crate::card_source::BoosterSlot {
+                rarity: "uncommon",
+                count: 3,
+            },
+            crate::card_source::BoosterSlot {
+                rarity: "rare",
+                count: 1,
+            },
+        ],
+    };
+
+    fn booster(seed: u64, packs: u32) -> crate::card_source::BoosterPack {
+        crate::card_source::BoosterPack {
+            set: "The Box".into(),
+            packs,
+            spec: TEST_BOOSTER,
+            seed: Some(seed),
+        }
+    }
+
+    #[tokio::test]
+    async fn booster_pack_fills_the_rarity_slots_and_never_draws_battle_pack() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_rarity_box(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        let pool = store.get_set_cards_by_rarity("The Box").await.unwrap();
+        let rarity_of: HashMap<String, &str> = ["common", "uncommon", "rare", "battle pack"]
+            .iter()
+            .flat_map(|r| {
+                pool.get(*r)
+                    .into_iter()
+                    .flatten()
+                    .map(move |c| (c.id.clone(), *r))
+            })
+            .collect();
+
+        let reqs = booster(99, 1)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
+        assert_eq!(reqs.len(), 11);
+
+        let drawn: HashSet<&String> = reqs.iter().map(|r| &r.id).collect();
+        assert_eq!(drawn.len(), 11, "cards are distinct within one pack");
+
+        let mut by_rarity: HashMap<&str, usize> = HashMap::new();
+        for r in &reqs {
+            *by_rarity.entry(rarity_of[&r.id]).or_default() += 1;
+        }
+        assert_eq!(by_rarity["common"], 7);
+        assert_eq!(by_rarity["uncommon"], 3);
+        assert_eq!(by_rarity["rare"], 1);
+        assert!(!by_rarity.contains_key("battle pack"));
+    }
+
+    #[tokio::test]
+    async fn booster_pack_is_reproducible_by_seed() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_rarity_box(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        let ids = |reqs: Vec<crate::models::CardRequest>| {
+            reqs.into_iter().map(|r| r.id).collect::<Vec<_>>()
+        };
+        let a = ids(booster(7, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
+        let b = ids(booster(7, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
+        let c = ids(booster(8, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
+
+        assert_eq!(a.len(), 22);
+        assert_eq!(a, b, "same seed -> same pull");
+        assert_ne!(a, c, "different seed -> different pull");
+    }
+
+    #[tokio::test]
+    async fn booster_pack_clamps_a_slot_larger_than_its_pool() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut db = DbStorage::new_sled(temp_dir.path()).unwrap();
+        seed_rarity_box(&mut db).await;
+        let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
+
+        // rare slot wants 99 but the box only has 5 rares
+        let spec = crate::card_source::BoosterSpec {
+            slots: &[crate::card_source::BoosterSlot {
+                rarity: "rare",
+                count: 99,
+            }],
+        };
+        let reqs = crate::card_source::BoosterPack {
+            set: "The Box".into(),
+            packs: 1,
+            spec,
+            seed: Some(1),
+        }
+        .to_card_requests(&mut store)
+        .await
+        .unwrap()
+        .requests;
+        assert_eq!(reqs.len(), 5);
     }
 }

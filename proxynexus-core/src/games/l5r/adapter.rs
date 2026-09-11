@@ -67,6 +67,7 @@ impl CatalogProvider for L5rAdapter {
                 title: title.clone(),
                 title_normalized: normalize_title(&title),
                 back_group: Some(c.side),
+                rarity: None,
                 linked_card_code: None,
                 linked_card_name: None,
                 linked_card_back_group: None,
