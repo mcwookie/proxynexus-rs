@@ -15,7 +15,11 @@ pub enum ActiveSource {
     DecklistUrl(String),
     /// A random booster-pack pull: set name, pack count, and RNG seed
     /// (kept in the value so a re-roll re-resolves the preview).
-    Booster { set: String, packs: u32, seed: u64 },
+    Booster {
+        set: String,
+        packs: u32,
+        seed: u64,
+    },
 }
 
 /// An empty "copies" field means the retail playset; a number is a flat

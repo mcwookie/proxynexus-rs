@@ -534,10 +534,12 @@ async fn get_printings_from_source(
             .to_card_requests(&mut store)
             .await
             .with_context(|| format!("Failed to fetch deck from URL: {}", url))?,
-        InputSource::Booster { set, packs, seed } => booster_source(game, set.clone(), packs, seed)?
-            .to_card_requests(&mut store)
-            .await
-            .with_context(|| format!("Failed to open boosters from set '{}'", set))?,
+        InputSource::Booster { set, packs, seed } => {
+            booster_source(game, set.clone(), packs, seed)?
+                .to_card_requests(&mut store)
+                .await
+                .with_context(|| format!("Failed to open boosters from set '{}'", set))?
+        }
     };
 
     let card_requests = card_requests_res.requests;
@@ -693,8 +695,15 @@ async fn handle_generate(
             seed,
             manifest,
         } => {
-            let source =
-                determine_input_source(cardlist, set_name, decklist_url, copies, booster, packs, seed);
+            let source = determine_input_source(
+                cardlist,
+                set_name,
+                decklist_url,
+                copies,
+                booster,
+                packs,
+                seed,
+            );
             let start = Instant::now();
 
             let printings = get_printings_from_source(db, game, source).await?;
@@ -800,18 +809,27 @@ async fn handle_query(
         None => None,
     };
 
-    let source =
-        determine_input_source(cardlist, set_name, decklist_url, copies, booster, packs, seed);
+    let source = determine_input_source(
+        cardlist,
+        set_name,
+        decklist_url,
+        copies,
+        booster,
+        packs,
+        seed,
+    );
 
     let output = match source {
         InputSource::Cardlist(list) => generate_query_output(&Cardlist(list), db, game).await,
-        InputSource::SetName(name, c) => {
-            generate_query_output(&SetName(name, c), db, game).await
-        }
+        InputSource::SetName(name, c) => generate_query_output(&SetName(name, c), db, game).await,
         InputSource::DecklistUrl(url) => generate_query_output(&DecklistUrl(url), db, game).await,
         InputSource::Booster { .. } => {
-            generate_query_output(booster_src.as_ref().expect("booster source built above"), db, game)
-                .await
+            generate_query_output(
+                booster_src.as_ref().expect("booster source built above"),
+                db,
+                game,
+            )
+            .await
         }
     };
 

@@ -1,10 +1,10 @@
+use crate::card_source::{BoosterSlot, BoosterSpec};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::card_store::normalize_title;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::catalog::{Card, CardVersion, Catalog, CatalogProvider, Pack};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::error::Result;
-use crate::card_source::{BoosterSlot, BoosterSpec};
 use crate::games::GameAdapterInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::games::cohccg::models::{CohCard, CohPack};
@@ -153,7 +153,8 @@ mod tests {
 
     #[test]
     fn maps_id_and_pack_code_onto_card_and_version() {
-        let (cards, versions) = build_cards_and_versions(vec![card("arena_011", "arena", 11, "rare")]);
+        let (cards, versions) =
+            build_cards_and_versions(vec![card("arena_011", "arena", 11, "rare")]);
 
         assert_eq!(cards.len(), 1);
         assert_eq!(versions.len(), 1);
@@ -177,7 +178,8 @@ mod tests {
 
     #[test]
     fn collector_number_becomes_version_position() {
-        let (_, versions) = build_cards_and_versions(vec![card("so_144", "secret_origins", 144, "rare")]);
+        let (_, versions) =
+            build_cards_and_versions(vec![card("so_144", "secret_origins", 144, "rare")]);
 
         assert_eq!(versions[0].position, Some(144));
     }
@@ -194,9 +196,15 @@ mod tests {
         assert!(pack_codes.contains(&"secret_origins"));
 
         let arena = cards.iter().filter(|c| c.pack_code == "arena").count();
-        let so = cards.iter().filter(|c| c.pack_code == "secret_origins").count();
+        let so = cards
+            .iter()
+            .filter(|c| c.pack_code == "secret_origins")
+            .count();
         assert_eq!(arena, 324, "Arena set size");
-        assert_eq!(so, 179, "Secret Origins set size (180 numbered, #102 never printed)");
+        assert_eq!(
+            so, 179,
+            "Secret Origins set size (180 numbered, #102 never printed)"
+        );
 
         // ids are unique across the whole game
         let mut ids: Vec<&str> = cards.iter().map(|c| c.id.as_str()).collect();
@@ -208,7 +216,10 @@ mod tests {
         // every rarity is one of the four known values
         for c in &cards {
             assert!(
-                matches!(c.rarity.as_str(), "common" | "uncommon" | "rare" | "battle pack"),
+                matches!(
+                    c.rarity.as_str(),
+                    "common" | "uncommon" | "rare" | "battle pack"
+                ),
                 "unexpected rarity {:?} on {}",
                 c.rarity,
                 c.id

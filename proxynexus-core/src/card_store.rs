@@ -2071,11 +2071,14 @@ mod tests {
         let mut store = CardStore::new(&mut db, "g".to_string()).unwrap();
 
         for (fixed, expected_total) in [(1u32, 2usize), (4, 8)] {
-            let reqs = SetName("The Set".into(), crate::card_source::SetCopies::Fixed(fixed))
-                .to_card_requests(&mut store)
-                .await
-                .unwrap()
-                .requests;
+            let reqs = SetName(
+                "The Set".into(),
+                crate::card_source::SetCopies::Fixed(fixed),
+            )
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
             assert_eq!(reqs.len(), expected_total, "Fixed({fixed})");
         }
     }
@@ -2086,7 +2089,12 @@ mod tests {
             .await
             .unwrap();
         let mut n = 0;
-        for (rarity, k) in [("common", 20), ("uncommon", 10), ("rare", 5), ("battle pack", 4)] {
+        for (rarity, k) in [
+            ("common", 20),
+            ("uncommon", 10),
+            ("rare", 5),
+            ("battle pack", 4),
+        ] {
             for _ in 0..k {
                 n += 1;
                 db.execute(&format!(
@@ -2139,10 +2147,19 @@ mod tests {
         let pool = store.get_set_cards_by_rarity("The Box").await.unwrap();
         let rarity_of: HashMap<String, &str> = ["common", "uncommon", "rare", "battle pack"]
             .iter()
-            .flat_map(|r| pool.get(*r).into_iter().flatten().map(move |c| (c.id.clone(), *r)))
+            .flat_map(|r| {
+                pool.get(*r)
+                    .into_iter()
+                    .flatten()
+                    .map(move |c| (c.id.clone(), *r))
+            })
             .collect();
 
-        let reqs = booster(99, 1).to_card_requests(&mut store).await.unwrap().requests;
+        let reqs = booster(99, 1)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests;
         assert_eq!(reqs.len(), 11);
 
         let drawn: HashSet<&String> = reqs.iter().map(|r| &r.id).collect();
@@ -2168,9 +2185,21 @@ mod tests {
         let ids = |reqs: Vec<crate::models::CardRequest>| {
             reqs.into_iter().map(|r| r.id).collect::<Vec<_>>()
         };
-        let a = ids(booster(7, 2).to_card_requests(&mut store).await.unwrap().requests);
-        let b = ids(booster(7, 2).to_card_requests(&mut store).await.unwrap().requests);
-        let c = ids(booster(8, 2).to_card_requests(&mut store).await.unwrap().requests);
+        let a = ids(booster(7, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
+        let b = ids(booster(7, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
+        let c = ids(booster(8, 2)
+            .to_card_requests(&mut store)
+            .await
+            .unwrap()
+            .requests);
 
         assert_eq!(a.len(), 22);
         assert_eq!(a, b, "same seed -> same pull");
