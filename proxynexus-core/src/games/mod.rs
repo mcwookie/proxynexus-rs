@@ -1,4 +1,5 @@
 pub mod agot;
+pub mod agot1st;
 pub mod ahlcg;
 pub mod coclcg;
 pub mod cohccg;
@@ -12,6 +13,7 @@ pub mod whinvasion;
 use crate::card_source::DecklistProvider;
 use crate::error::{ProxyNexusError, Result};
 use crate::games::agot::adapter::AgotAdapter;
+use crate::games::agot1st::adapter::Agot1stAdapter;
 use crate::games::ahlcg::adapter::AhlcgAdapter;
 use crate::games::coclcg::adapter::CocAdapter;
 use crate::games::cohccg::adapter::CohAdapter;
@@ -46,6 +48,7 @@ pub fn get_booster_spec(game_id: &str) -> Option<crate::card_source::BoosterSpec
         Box::new(NetrunnerRebootAdapter::new()),
         Box::new(L5rAdapter::new()),
         Box::new(AgotAdapter::new()),
+        Box::new(Agot1stAdapter::new()),
         Box::new(LotrLcgAdapter::new()),
         Box::new(MarvelChampionsAdapter::new()),
         Box::new(AhlcgAdapter::new()),
@@ -67,6 +70,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(NetrunnerRebootAdapter::new()),
         Box::new(L5rAdapter::new()),
         Box::new(AgotAdapter::new()),
+        Box::new(Agot1stAdapter::new()),
         Box::new(LotrLcgAdapter::new()),
         Box::new(MarvelChampionsAdapter::new()),
         Box::new(AhlcgAdapter::new()),
