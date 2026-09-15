@@ -57,8 +57,8 @@ fn build_cards_and_versions(
     for card in agot1st_cards {
         cards.push(Card {
             id: card.unique_id.clone(),
-            title: card.name.clone(),
-            title_normalized: normalize_title(&card.name),
+            title: card.label.clone(),
+            title_normalized: normalize_title(&card.label),
             back_group: Some(AGOT1ST_BACK_GROUP.to_string()),
             rarity: None,
             linked_card_code: None,
