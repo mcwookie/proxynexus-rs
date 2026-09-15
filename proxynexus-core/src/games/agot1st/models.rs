@@ -36,7 +36,8 @@ pub struct Agot1stPack {
 ///    "pack_code": "a-sword-in-the-darkness",
 ///    "card_type": "Location",
 ///    "card_quantity": 1,
-///    "house": "Baratheon"
+///    "house": "Baratheon",
+///    "label": "The Iron Throne (a-sword-in-the-darkness)"
 ///  },
 /// ```
 
