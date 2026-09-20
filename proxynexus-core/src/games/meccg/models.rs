@@ -57,7 +57,7 @@ pub struct MeccgCard {
     /// Balrog, Dual.
     pub alignment: String,
     /// The card's position within its pack. Sent as an integer.
-    pub card_number: Option<i64>,
+    pub card_number: i64,
     /// Printed rarity: F3, U, C4, R3, etc. (there are many options).
     /// The number indicates the number of copies of this card on a print sheet.
     pub rarity: String,

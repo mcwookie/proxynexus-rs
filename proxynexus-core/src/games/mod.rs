@@ -3,6 +3,7 @@ pub mod agot1st;
 pub mod ahlcg;
 pub mod coclcg;
 pub mod cohccg;
+pub mod meccg;
 pub mod l5r;
 pub mod lotrlcg;
 pub mod marvel_champions;
@@ -57,6 +58,7 @@ pub fn get_booster_spec(game_id: &str) -> Option<crate::card_source::BoosterSpec
         Box::new(WhcAdapter::new()),
         Box::new(CocAdapter::new()),
         Box::new(CohAdapter::new()),
+        Box::new(MeccgAdapter::new()),
     ];
 
     adapters

@@ -15,10 +15,9 @@ use async_trait::async_trait;
 /// is used for Character, Resource, and Hazard cards.  The map of northwestern
 /// Middle Earth is used for Site and Region cards.
 #[cfg(not(target_arch = "wasm32"))]
-const MECCG_BACK_GROUPS: [&str; 2] = ["eye_back", "map_back"];
+const MECCG_BACK_GROUPS: [&str; 2] = ["eye", "map"];
 
 /// Define which card types use the Sauron Eye back.  The other card types use the map back. 
-#[cfg(not(target_arch = "wasm32"))]   
 const MECCG_BACK_SAURON_EYE: [&str; 3] = ["Character", "Resource", "Hazard"];
 
 /// Retail booster: 15 cards, 10 common + 4 uncommon + 1 rare. 
@@ -74,6 +73,21 @@ impl GameAdapterInfo for MeccgAdapter {
     }
 }
 
+/// Map the actual card rarities to the three standard rarities used by the catalog.
+/// This should catch all the actual rarities used in the game, 
+/// but if a new one is added that doesn't match the mapping, it will panic.
+fn meccg_rarity_bucket(rarity: &str) -> &'static str {
+    let base = rarity.split('+').next().unwrap_or(rarity);
+    match base.chars().next() {
+        Some('C') => "common",     // C1-C6, CA, CA2, CB, CB2
+        Some('U') => "uncommon",   // U, U1-U4
+        Some('R') => "rare",       // R, R1-R3
+        Some('F') => "fixed",      // F1-F5 
+        Some('P') => "promo",      // Not present in boosters
+        _ => panic!("unmapped rarity: {rarity}"), // Rarity not found, panic.
+    }
+}
+
 /// Turns the flat `meccg_full.json` card list into catalog rows.
 ///
 /// Middle Earth CCG has no double-sided cards -- every card is one
@@ -86,26 +100,25 @@ fn build_cards_and_versions(meccg_cards: Vec<MeccgCard>) -> (Vec<Card>, Vec<Card
 
     for card in meccg_cards {
         cards.push(Card {
-            id: card.id.clone(),
+            id: card.unique_id.clone(),
             title: card.label.clone(),
             title_normalized: normalize_title(&card.label),
-            if MECCG_BACK_SAURON_EYE.contains(&card.card_type.as_str()) {
-                back_group: Some(MECCG_BACK_GROUPS[0].to_string())
+            back_group: Some(if MECCG_BACK_SAURON_EYE.contains(&card.card_type.as_str()) {
+                MECCG_BACK_GROUPS[0].to_string()
             } else {
-                back_group: Some(MECCG_BACK_GROUPS[1].to_string())
-            },
-            back_group: Some(MECCG_BACK_GROUPS[0].to_string()),
-            rarity: Some(card.rarity),
+                MECCG_BACK_GROUPS[1].to_string()
+            }),
+            rarity: Some(meccg_rarity_bucket(&card.rarity).to_string()),
             linked_card_code: None,
             linked_card_name: None,
             linked_card_back_group: None,
         });
 
         card_versions.push(CardVersion {
-            card_id: card.id,
+            card_id: card.unique_id,
             pack_id: card.pack_code,
             quantity: 1,
-            position: Some(card.number),
+            position: Some(card.card_number),
             api_id: None,
         });
     }
@@ -121,7 +134,7 @@ impl CatalogProvider for MeccgAdapter {
         // for this out-of-print game that i'm aware of; the data is derived from the
         // https://github.com/council-of-elrond-meccg/meccg-cards-database
         let meccg_packs: Vec<MeccgPack> = serde_json::from_str(include_str!("meccg_packs.json"))?;
-        let meccg_cards: Vec<MeccgCard> = serde_json::from_str(include_str!("meccg_full.json"))?;
+        let meccg_cards: Vec<MeccgCard> = serde_json::from_str(include_str!("meccg_cards.json"))?;
 
         let packs: Vec<Pack> = meccg_packs
             .into_iter()
@@ -148,13 +161,15 @@ impl CatalogProvider for MeccgAdapter {
 mod tests {
     use super::*;
 
-    fn card(id: &str, pack_code: &str, number: i64, rarity: &str) -> MeccgCard {
+    fn card(unique_id: &str, name: &str, label: &str, pack_code: &str, card_type: &str, alignment: &str, card_number: i64, rarity: &str) -> MeccgCard {
         MeccgCard {
-            id: id.to_string(),
-            name: format!("Card {id}"),
+            unique_id: unique_id.to_string(),
+            name: name.to_string(),
+            label: label.to_string(),
             pack_code: pack_code.to_string(),
-            number,
-            card_type: "power".to_string(),
+            card_type: card_type.to_string(),
+            alignment: alignment.to_string(),
+            card_number,
             rarity: rarity.to_string(),
         }
     }
@@ -162,14 +177,14 @@ mod tests {
     #[test]
     fn maps_id_and_pack_code_onto_card_and_version() {
         let (cards, versions) =
-            build_cards_and_versions(vec![card("DM-99", "dark-minions", 99, "U2")]);
+            build_cards_and_versions(vec![card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2")]);
 
         assert_eq!(cards.len(), 1);
         assert_eq!(versions.len(), 1);
         assert_eq!(cards[0].id, "DM-99");
-        assert_eq!(cards[0].title, "Card DM-99");
-        assert_eq!(cards[0].back_group.as_deref(), Some("card"));
-        assert_eq!(cards[0].rarity.as_deref(), Some("U2"));
+        assert_eq!(cards[0].title, "Waylaid, Wounded, and Orc-dragged");
+        assert_eq!(cards[0].back_group.as_deref(), Some("eye"));
+        assert_eq!(cards[0].rarity.as_deref(), Some("uncommon"));
         assert_eq!(versions[0].card_id, "DM-99");
         assert_eq!(versions[0].pack_id, "dark-minions");
     }
@@ -177,8 +192,8 @@ mod tests {
     #[test]
     fn every_card_version_is_a_single_copy() {
         let (_, versions) = build_cards_and_versions(vec![
-            card("DM-99", "dark-minions", 99, "U2"),
-            card("LE-74", "the-lidless-eye", 74, "CB+CS1"),
+            card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2"),
+            card("LE-74", "Giant", "Giant (the-lidless-eye)", "the-lidless-eye", "Hazard", "Neutral", 74, "C3"),
         ]);
 
         assert!(versions.iter().all(|v| v.quantity == 1));
@@ -187,7 +202,7 @@ mod tests {
     #[test]
     fn collector_number_becomes_version_position() {
         let (_, versions) =
-            build_cards_and_versions(vec![card("DM-99", "dark-minions", 99, "U2")]);
+            build_cards_and_versions(vec![card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2")]);
 
         assert_eq!(versions[0].position, Some(99));
     }
@@ -197,13 +212,13 @@ mod tests {
         let packs: Vec<MeccgPack> =
             serde_json::from_str(include_str!("meccg_packs.json")).expect("meccg_packs.json parses");
         let cards: Vec<MeccgCard> =
-            serde_json::from_str(include_str!("meccg_full.json")).expect("meccg_full.json parses");
+            serde_json::from_str(include_str!("meccg_cards.json")).expect("meccg_cards.json parses");
 
         let pack_codes: Vec<&str> = packs.iter().map(|p| p.code.as_str()).collect();
         assert!(pack_codes.contains(&"dark-minions"));
         assert!(pack_codes.contains(&"the-lidless-eye"));
 
-        let dark_minions = cards.iter().filter(|c| c.pack_code == "dark-minions").count();
+        let dark_minions = cards.iter().filter(|c| c.pack_councommonde == "dark-minions").count();
         let the_lidless_eye = cards
             .iter()
             .filter(|c| c.pack_code == "the-lidless-eye")
@@ -215,23 +230,16 @@ mod tests {
         );
 
         // ids are unique across the whole game
-        let mut ids: Vec<&str> = cards.iter().map(|c| c.id.as_str()).collect();
+        let mut ids: Vec<&str> = cards.iter().map(|c| c.unique_id.as_str()).collect();
         ids.sort_unstable();
         let unique = ids.len();
         ids.dedup();
         assert_eq!(ids.len(), unique, "card ids are unique");
 
-        // every rarity is one of the four known values
+        // forces every real rarity code through the bucket fn; panics (failing the test)
+        // if any card in the bundled data has an unrecognized rarity
         for c in &cards {
-            assert!(
-                matches!(
-                    c.rarity.as_str(),
-                    "common" | "uncommon" | "rare" | "battle pack"
-                ),
-                "unexpected rarity {:?} on {}",
-                c.rarity,
-                c.id
-            );
+            meccg_rarity_bucket(&c.rarity);
         }
     }
 }
