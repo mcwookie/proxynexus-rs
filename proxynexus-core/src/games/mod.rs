@@ -17,6 +17,7 @@ use crate::games::agot1st::adapter::Agot1stAdapter;
 use crate::games::ahlcg::adapter::AhlcgAdapter;
 use crate::games::coclcg::adapter::CocAdapter;
 use crate::games::cohccg::adapter::CohAdapter;
+use crate::games::meccg::adapter::MeccgAdapter;
 use crate::games::l5r::adapter::L5rAdapter;
 use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
@@ -78,6 +79,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(WhcAdapter::new()),
         Box::new(CocAdapter::new()),
         Box::new(CohAdapter::new()),
+        Box::new(MeccgAdapter::new()),
     ];
 
     for adapter in adapters {
