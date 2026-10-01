@@ -38,26 +38,26 @@ impl GameAdapterInfo for SwlcgAdapter {
     }
 }
 
-// Which generic card back a card needs, classified by `side`
+// Which generic card back a card needs, classified by `side`.
+// Balance of the Force packs have different backs than other packs, 
+// so we need to check for that as well.
 #[cfg(not(target_arch = "wasm32"))]
-const LIGHT_BACK: &str = "light_back";
-const DARK_BACK: &str = "dark_back";
-const BOTF_LIGHT_BACK: &str = "l01_back";
-const BOTF_DARK_BACK: &str = "d01_back";
+const LIGHT_BACK: &str = "light";
+#[cfg(not(target_arch = "wasm32"))]
+const DARK_BACK: &str = "dark";
+#[cfg(not(target_arch = "wasm32"))]
+const BOTF_LIGHT_BACK: &str = "botf-light";
+#[cfg(not(target_arch = "wasm32"))]
+const BOTF_DARK_BACK: &str = "botf-dark";
 
 #[cfg(not(target_arch = "wasm32"))]
-fn back_group_for(side: &str, objective_set_number: Option<i64>) -> Option<String> {
-    if objective_set_number.is_none() {
-        if side == "Light" {
-            Some(BOTF_LIGHT_BACK.to_string())
-        } else if side == "Dark" {
-            Some(BOTF_DARK_BACK.to_string())
-        }
-    } else {
-        if side == "Light" {    
-            Some(LIGHT_BACK.to_string())
-        } else if side == "Dark" {
-            Some(DARK_BACK.to_string())
-        }
+fn back_group_for(pack_code: &str, side: &str, objective_set_number: Option<i64>) -> Option<String> {
+    let is_botf_pack = pack_code == "balance-of-the-force" && objective_set_number.is_some();
+    match (is_botf_pack, side) {
+        (true, "Light") => Some(BOTF_LIGHT_BACK.to_string()),
+        (true, "Dark") => Some(BOTF_DARK_BACK.to_string()),
+        (false, "Light") => Some(LIGHT_BACK.to_string()),
+        (false, "Dark") => Some(DARK_BACK.to_string()),
+        _ => None,
     }
 }
