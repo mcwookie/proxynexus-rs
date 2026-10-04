@@ -9,6 +9,7 @@ pub mod lotrlcg;
 pub mod marvel_champions;
 pub mod netrunner;
 pub mod netrunner_reboot;
+pub mod swlcg;
 pub mod whconquest;
 pub mod whinvasion;
 use crate::card_source::DecklistProvider;
@@ -24,6 +25,7 @@ use crate::games::lotrlcg::adapter::LotrLcgAdapter;
 use crate::games::marvel_champions::adapter::MarvelChampionsAdapter;
 use crate::games::netrunner::adapter::NetrunnerAdapter;
 use crate::games::netrunner_reboot::adapter::NetrunnerRebootAdapter;
+use crate::games::swlcg::adapter::SwlcgAdapter;
 use crate::games::whconquest::adapter::WhcAdapter;
 use crate::games::whinvasion::adapter::WhiAdapter;
 use serde::de::DeserializeOwned;
@@ -59,6 +61,7 @@ pub fn get_booster_spec(game_id: &str) -> Option<crate::card_source::BoosterSpec
         Box::new(CocAdapter::new()),
         Box::new(CohAdapter::new()),
         Box::new(MeccgAdapter::new()),
+        Box::new(SwlcgAdapter::new()),
     ];
 
     adapters
@@ -82,6 +85,7 @@ pub fn get_game_id_by_subdomain(subdomain: &str) -> Option<&'static str> {
         Box::new(CocAdapter::new()),
         Box::new(CohAdapter::new()),
         Box::new(MeccgAdapter::new()),
+        Box::new(SwlcgAdapter::new()),
     ];
 
     for adapter in adapters {

@@ -57,7 +57,7 @@ pub struct SwlcgCard {
     ///  Rebel Alliance, Scum and Villainy, Sith, Smugglers and Spies.
     pub affiliation: String,
     /// The objective set number for the card. Sent in the JSON as an integer.
-    pub objective_set: Option<i64>,
+    pub objective_set_number: Option<i64>,
     /// The card's position within the objective set. Sent as an integer.
     pub objective_set_sequence: Option<i64>,
 }
