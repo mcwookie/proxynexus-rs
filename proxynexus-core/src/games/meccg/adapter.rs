@@ -218,7 +218,7 @@ mod tests {
         assert!(pack_codes.contains(&"dark-minions"));
         assert!(pack_codes.contains(&"the-lidless-eye"));
 
-        let dark_minions = cards.iter().filter(|c| c.pack_councommonde == "dark-minions").count();
+        let dark_minions = cards.iter().filter(|c| c.pack_code == "dark-minions").count();
         let the_lidless_eye = cards
             .iter()
             .filter(|c| c.pack_code == "the-lidless-eye")
