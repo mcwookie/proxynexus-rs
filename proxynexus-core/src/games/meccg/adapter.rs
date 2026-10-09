@@ -17,12 +17,12 @@ use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
 const MECCG_BACK_GROUPS: [&str; 2] = ["eye", "map"];
 
-/// Define which card types use the Sauron Eye back.  The other card types use the map back. 
+/// Define which card types use the Sauron Eye back.  The other card types use the map back.
 const MECCG_BACK_SAURON_EYE: [&str; 3] = ["Character", "Resource", "Hazard"];
 
-/// Retail booster: 15 cards, 10 common + 4 uncommon + 1 rare. 
+/// Retail booster: 15 cards, 10 common + 4 uncommon + 1 rare.
 /// MECCG is complex when it comes to pack types and distributions.
-/// I need to rework this to match what was actually printed, but for now 
+/// I need to rework this to match what was actually printed, but for now
 /// this is a reasonable approximation of the retail booster distribution.
 const MECCG_BOOSTER: BoosterSpec = BoosterSpec {
     slots: &[
@@ -74,16 +74,16 @@ impl GameAdapterInfo for MeccgAdapter {
 }
 
 /// Map the actual card rarities to the three standard rarities used by the catalog.
-/// This should catch all the actual rarities used in the game, 
+/// This should catch all the actual rarities used in the game,
 /// but if a new one is added that doesn't match the mapping, it will panic.
 fn meccg_rarity_bucket(rarity: &str) -> &'static str {
     let base = rarity.split('+').next().unwrap_or(rarity);
     match base.chars().next() {
-        Some('C') => "common",     // C1-C6, CA, CA2, CB, CB2
-        Some('U') => "uncommon",   // U, U1-U4
-        Some('R') => "rare",       // R, R1-R3
-        Some('F') => "fixed",      // F1-F5 
-        Some('P') => "promo",      // Not present in boosters
+        Some('C') => "common",                    // C1-C6, CA, CA2, CB, CB2
+        Some('U') => "uncommon",                  // U, U1-U4
+        Some('R') => "rare",                      // R, R1-R3
+        Some('F') => "fixed",                     // F1-F5
+        Some('P') => "promo",                     // Not present in boosters
         _ => panic!("unmapped rarity: {rarity}"), // Rarity not found, panic.
     }
 }
@@ -92,7 +92,7 @@ fn meccg_rarity_bucket(rarity: &str) -> &'static str {
 ///
 /// Middle Earth CCG has no double-sided cards -- every card is one
 /// physical face with one of two card backs determined by the card type (see
-/// `src/games/meccg/backs/`). 
+/// `src/games/meccg/backs/`).
 #[cfg(not(target_arch = "wasm32"))]
 fn build_cards_and_versions(meccg_cards: Vec<MeccgCard>) -> (Vec<Card>, Vec<CardVersion>) {
     let mut cards = Vec::with_capacity(meccg_cards.len());
@@ -103,11 +103,13 @@ fn build_cards_and_versions(meccg_cards: Vec<MeccgCard>) -> (Vec<Card>, Vec<Card
             id: card.unique_id.clone(),
             title: card.label.clone(),
             title_normalized: normalize_title(&card.label),
-            back_group: Some(if MECCG_BACK_SAURON_EYE.contains(&card.card_type.as_str()) {
-                MECCG_BACK_GROUPS[0].to_string()
-            } else {
-                MECCG_BACK_GROUPS[1].to_string()
-            }),
+            back_group: Some(
+                if MECCG_BACK_SAURON_EYE.contains(&card.card_type.as_str()) {
+                    MECCG_BACK_GROUPS[0].to_string()
+                } else {
+                    MECCG_BACK_GROUPS[1].to_string()
+                },
+            ),
             rarity: Some(meccg_rarity_bucket(&card.rarity).to_string()),
             linked_card_code: None,
             linked_card_name: None,
@@ -161,7 +163,16 @@ impl CatalogProvider for MeccgAdapter {
 mod tests {
     use super::*;
 
-    fn card(unique_id: &str, name: &str, label: &str, pack_code: &str, card_type: &str, alignment: &str, card_number: i64, rarity: &str) -> MeccgCard {
+    fn card(
+        unique_id: &str,
+        name: &str,
+        label: &str,
+        pack_code: &str,
+        card_type: &str,
+        alignment: &str,
+        card_number: i64,
+        rarity: &str,
+    ) -> MeccgCard {
         MeccgCard {
             unique_id: unique_id.to_string(),
             name: name.to_string(),
@@ -176,8 +187,16 @@ mod tests {
 
     #[test]
     fn maps_id_and_pack_code_onto_card_and_version() {
-        let (cards, versions) =
-            build_cards_and_versions(vec![card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2")]);
+        let (cards, versions) = build_cards_and_versions(vec![card(
+            "DM-99",
+            "Waylaid, Wounded, and Orc-dragged",
+            "Waylaid, Wounded, and Orc-dragged",
+            "dark-minions",
+            "Hazard",
+            "Neutral",
+            99,
+            "U2",
+        )]);
 
         assert_eq!(cards.len(), 1);
         assert_eq!(versions.len(), 1);
@@ -192,8 +211,26 @@ mod tests {
     #[test]
     fn every_card_version_is_a_single_copy() {
         let (_, versions) = build_cards_and_versions(vec![
-            card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2"),
-            card("LE-74", "Giant", "Giant (the-lidless-eye)", "the-lidless-eye", "Hazard", "Neutral", 74, "C3"),
+            card(
+                "DM-99",
+                "Waylaid, Wounded, and Orc-dragged",
+                "Waylaid, Wounded, and Orc-dragged",
+                "dark-minions",
+                "Hazard",
+                "Neutral",
+                99,
+                "U2",
+            ),
+            card(
+                "LE-74",
+                "Giant",
+                "Giant (the-lidless-eye)",
+                "the-lidless-eye",
+                "Hazard",
+                "Neutral",
+                74,
+                "C3",
+            ),
         ]);
 
         assert!(versions.iter().all(|v| v.quantity == 1));
@@ -201,24 +238,35 @@ mod tests {
 
     #[test]
     fn collector_number_becomes_version_position() {
-        let (_, versions) =
-            build_cards_and_versions(vec![card("DM-99", "Waylaid, Wounded, and Orc-dragged", "Waylaid, Wounded, and Orc-dragged", "dark-minions", "Hazard", "Neutral", 99, "U2")]);
+        let (_, versions) = build_cards_and_versions(vec![card(
+            "DM-99",
+            "Waylaid, Wounded, and Orc-dragged",
+            "Waylaid, Wounded, and Orc-dragged",
+            "dark-minions",
+            "Hazard",
+            "Neutral",
+            99,
+            "U2",
+        )]);
 
         assert_eq!(versions[0].position, Some(99));
     }
 
     #[test]
     fn bundled_catalog_parses_and_has_both_sets() {
-        let packs: Vec<MeccgPack> =
-            serde_json::from_str(include_str!("meccg_packs.json")).expect("meccg_packs.json parses");
-        let cards: Vec<MeccgCard> =
-            serde_json::from_str(include_str!("meccg_cards.json")).expect("meccg_cards.json parses");
+        let packs: Vec<MeccgPack> = serde_json::from_str(include_str!("meccg_packs.json"))
+            .expect("meccg_packs.json parses");
+        let cards: Vec<MeccgCard> = serde_json::from_str(include_str!("meccg_cards.json"))
+            .expect("meccg_cards.json parses");
 
         let pack_codes: Vec<&str> = packs.iter().map(|p| p.code.as_str()).collect();
         assert!(pack_codes.contains(&"dark-minions"));
         assert!(pack_codes.contains(&"the-lidless-eye"));
 
-        let dark_minions = cards.iter().filter(|c| c.pack_code == "dark-minions").count();
+        let dark_minions = cards
+            .iter()
+            .filter(|c| c.pack_code == "dark-minions")
+            .count();
         let the_lidless_eye = cards
             .iter()
             .filter(|c| c.pack_code == "the-lidless-eye")
